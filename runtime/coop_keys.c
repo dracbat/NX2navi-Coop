@@ -261,14 +261,24 @@ static void on_view(const CoopExtView *v, void *user) {
     int was_host_seat = T.v.host;
     T.v = *v;
     plat_mutex_lock(&K.lock);
-    if (!v->in_room || !was_in || v->room != was_room) {   // out of a room, or into another: nothing of the last stays
-        if (was_in || v->in_room) reset_room();
+    if (was_in && (!v->in_room || v->room != was_room)) {   // out of a room, or into another: nothing of the last stays
+        reset_room();
+        T.was_host = 0;
+    } else if (!was_in && v->in_room) {
+        // into a room: nothing of an earlier one stays, except a KEYS kept aside while this game was in none. The host
+        // greets a player who comes in the step after letting them in, while this game's glue lists the room only in
+        // the step after it was let in (coop_ext_step reads the room's view of the step before), so the greeting can
+        // come first; it is taken below, since the view now names its sender the host.
+        CoopKeysMsg held = T.held;
+        uint64_t held_from = T.held_from;
+        reset_room();
+        T.held = held, T.held_from = held_from;
         T.was_host = 0;
     }
     K.in_room = v->in_room, K.self = v->self, K.host = v->host;
     K.self_id = v->self ? v->seat[v->self].id : 0;
     int host = hosting();
-    if (T.held_from) {   // a KEYS kept aside: taken when the view now names its sender the host, else dropped
+    if (T.held_from && v->in_room) {   // a KEYS kept aside: taken if the view names its sender the host, else dropped
         int s = seat_of(T.held_from);
         if (K.on && s && s == v->host && !host) take(&T.held, plat_now_ms());
         T.held_from = 0;
@@ -351,7 +361,9 @@ static void on_tick(uint64_t now, void *user) {
                 if (K.greet & 1u << s && (!T.v.seat[s].id || coop_ext_send(s, COOP_K_KEYS, b, n, 1))) K.greet &= ~(1u << s);
         }
     } else {
-        if (K.have && K.heard_at && now - K.heard_at >= QUIET_MS) {
+        // heard_at can be a moment later than now: a KEYS kept aside is taken by the view hook, which runs in the step
+        // after the step's clock was read
+        if (K.have && K.heard_at && now > K.heard_at && now - K.heard_at >= QUIET_MS) {
             K.have = 0, T.said_any = 0;
             rt_log("coop: keys: no counts from the room's host for %d s: this game's small keys are its own until the host "
                    "sends them (a host with NX2NAVI_COOP_KEYS=own keeps no pool)", QUIET_MS / 1000);
