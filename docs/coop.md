@@ -277,7 +277,9 @@ places.
   tested with a stand-in for Steam: `NX2NAVI_COOP_LOCAL=<port>` in the environment (never from `nx2navi.ini`) makes a
   game the player whose id is that UDP port on 127.0.0.1; `NX2NAVI_COOP_LOCAL_MAKE=1` makes its room at once and
   `NX2NAVI_COOP_LOCAL_JOIN=<port>` joins another game's. `NX2NAVI_COOP_TRACE=1` logs every two seconds where this
-  game's Link is and where it has the others. The stand-in names each player `Player <port>`.
+  game's Link is and where it has the others. The stand-in names each player `Player <port>`;
+  `NX2NAVI_COOP_LOCAL_NAMES=<port>=<name>,<port>=<name>,...` (environment only) names those ports instead, test
+  peers' included, for pictures. Give every game of the test the same list, so that each shows the same names.
 - `python tests/coop_ext_peer.py --host <port>` is a second NX2navi Co-op player without a second game (two games need
   twice the memory): it joins the room of a game started with `NX2NAVI_COOP_LOCAL=<port>` and
   `NX2NAVI_COOP_LOCAL_MAKE=1`, stands two metres beside the game's Link, says a chat line and asks for the game's
