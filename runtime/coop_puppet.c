@@ -45,6 +45,7 @@
 #include "coop.h"
 #include "coop_offer.h"
 #include "coop_puppet.h"
+#include "coop_tags.h"
 #include "host.h"
 #include "platform/platform.h"
 
@@ -2314,6 +2315,65 @@ static void room_colours(const Remote *r, const uint64_t *session, const int *in
     for (int id = 1; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = id == self ? COL_NONE : out[id];
 }
 
+// ---- name tags (coop_tags.h): where the shown players' Links stand, for
+// the overlay that writes each one's name above his head (ui/coop_tags_view.cpp). Read at the start of the hook, before
+// this frame's poses move the puppets, so Link and the puppets are where the frame just drawn had them. Each anchor
+// carries its player's name and room colour (the same CL.member the tunics show). The local Link's position goes with
+// them: the overlay draws only through a camera near him, so a menu's model camera (the pause screen's item view) or a
+// far event camera shows no tags. NX2NAVI_COOP_TAGS=0 publishes nothing; NX2NAVI_COOP_TAGS_TEST also tags the local
+// Link and the shadow puppet.
+
+static void tags_publish(uint64_t player) {
+    CoopTagsCfg tc;
+    coop_tags_cfg(&tc);
+    if (!tc.on) return;
+    static char names[COOP_MAX_MEMBERS + 1][COOP_NAME_MAX + 1];
+    static CoopTagFrame f;
+    int self = N.self;
+    plat_mutex_lock(&N.lock);
+    memcpy(names, N.name, sizeof names);
+    plat_mutex_unlock(&N.lock);
+    CoopTagAnchor *a = f.a;
+    int n = 0;
+    f.link_ok = player && LD32(player + A_STATE) == 4;
+    if (f.link_ok) memcpy(f.link_pos, (const void *)(uintptr_t)(player + A_POS), 12);
+    for (int id = 1; id <= COOP_MAX_MEMBERS && n < COOP_TAG_MAX; id++) {
+        Puppet *p = &N.puppet[id];
+        if (id == self || p->state != SP_FOLLOW || !puppet_alive(p) || LD32(p->actor + A_STATE) != 4) continue;
+        a[n] = (CoopTagAnchor){.kind = COOP_TAG_MEMBER, .member = (uint8_t)id, .adult = strstr(p->s.text, "Adult") != NULL,
+                               .colour = (int8_t)CL.member[id]};
+        memcpy(a[n].pos, (const void *)(uintptr_t)(p->actor + A_POS), 12);
+        snprintf(a[n].name, sizeof a[n].name, "%s", names[id]);
+        n++;
+    }
+    if (tc.test && player && n < COOP_TAG_MAX) {
+        a[n] = (CoopTagAnchor){.kind = COOP_TAG_TEST_LINK, .adult = (uint8_t)is_adult(player), .colour = (int8_t)CL.self};
+        memcpy(a[n].pos, (const void *)(uintptr_t)(player + A_POS), 12);
+        snprintf(a[n].name, sizeof a[n].name, "%s", self >= 1 && self <= COOP_MAX_MEMBERS && names[self][0] ? names[self] : "Link");
+        n++;
+        if (P.test == 2 && shadow_p.state == SP_FOLLOW && puppet_alive(&shadow_p) && LD32(shadow_p.actor + A_STATE) == 4 &&
+            n < COOP_TAG_MAX) {
+            a[n] = (CoopTagAnchor){.kind = COOP_TAG_TEST_SHADOW, .adult = strstr(shadow_p.s.text, "Adult") != NULL,
+                                   .colour = (int8_t)CL.test};
+            memcpy(a[n].pos, (const void *)(uintptr_t)(shadow_p.actor + A_POS), 12);
+            snprintf(a[n].name, sizeof a[n].name, "Shadow");
+            n++;
+        }
+    }
+    f.n = n, f.game_frame = P.frames;
+    coop_tags_publish(&f);
+    static int last_n = -1;
+    if (n != last_n) {
+        char line[400];
+        int o = snprintf(line, sizeof line, "coop: tags: w=%.2f game frame %u: %d anchors", wsec(), P.frames, n);
+        for (int i = 0; i < n && o < (int)sizeof line - 80; i++)
+            o += snprintf(line + o, sizeof line - o, "%s '%s' %s at %.2f %.2f %.2f", i ? ";" : ":", a[i].name,
+                          a[i].adult ? "adult" : "child", a[i].pos[0], a[i].pos[1], a[i].pos[2]);
+        rt_log("%s", line);
+        last_n = n;
+    }
+}
+
 // ---- the hook
 
 static void puppet_frame(Cpu *c) {
@@ -2328,6 +2388,7 @@ static void puppet_frame(Cpu *c) {
                player ? LD32(player + A_STATE) : 0);
         P.player = player, P.player_frames = 0;
     }
+    tags_publish(player);   // name tags: before this frame's poses move the puppets
     char area[80] = "";
     if (player) {
         P.player_frames++;

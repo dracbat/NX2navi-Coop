@@ -93,6 +93,7 @@ extern const char rt_port_version[];
 void cheats_frame(uint64_t frame);   // cheats.c
 bool tab_cheats(float scale);        // ui/cheats_tab.cpp; true: restart into the rebuild
 }
+#include "ui/coop_tags_view.h"   // co-op name tags: drawn over the game while the menu is closed
 
 // Roboto Medium (Apache-2.0, ui/fonts/LICENSE-Roboto.txt) with Latin and Cyrillic glyphs. The file comes in with
 // #embed where the compiler has it (clang 19 and later define __has_embed). An older one, which a Linux build with the
@@ -2066,6 +2067,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     perf_tick(plat_now_ns(), t);
     amiibo_tick();
     const bool toast = coop_toast_tick();   // a co-op player came or went: a toast over the game, the menu closed
+    const bool tags = coop_tags_tick(t);    // co-op name tags: the other players' names over their Links
     if (g_booting.load(std::memory_order_relaxed)) g_booting.store(0, std::memory_order_release);   // the game runs
     bool open = g_open.load(std::memory_order_relaxed);
     // the frame the menu is first laid out after opening: also when its g_reset went to an earlier frame of the overlay
@@ -2083,7 +2085,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
             if (g_debug.load()) debug_menu_tab(0);
             set_open(1);
             open = true;
-        } else if (!g_perf_mode && !toast) {
+        } else if (!g_perf_mode && !toast && !tags) {
             return 0;
         }
     }
@@ -2148,6 +2150,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     } else if (open) {
         layout_menu(t->width, t->height, scale);
     }
+    if (!open && tags) coop_tags_draw(t, scale);   // background list: the panel and the toasts stay above
     perf_draw(t, scale);
     if (!open && toast) coop_toast_draw((float)t->width, (float)t->height, scale);
     ImGui::Render();
