@@ -86,6 +86,10 @@ static const char *const known[] = {
     "COOP_TEST_SET",   // test: sets flags by hash at given frames (coop_game.c); no menu row
     "COOP_ACCEPT",     // accepts a co-op room's members and rules before anything of it is applied (coop_game.c)
     "COOP_REMOVE",     // the room's maker removes a member: its id (coop.c), or a key's fingerprint (coop_game.c); no row (the Co-op tab's Remove)
+    "COOP_PUPPETS", "COOP_PUPPET_HOOK",   // co-op puppets (coop_puppet.c): the other players shown, the patch set's switch
+    "COOP_PUPPET_TEST", "COOP_PUPPET_BB", "COOP_PUPPET_ARMS",   // their test, its blackboard copy and the arms mode; no menu row
+    "COOP_PUPPET_GEAR", "COOP_PUPPET_GEAR_DRAWN", "COOP_PUPPET_GEAR_MASK", "COOP_PUPPET_GEAR_TEST",   // the puppets' gear; no menu row
+    "COOP_COLOUR_SELF", "COOP_COLOUR_TEST", "COOP_COLOUR_PARAM", "COOP_COLOUR_STRENGTH", "COOP_COLOUR_RGB", "COOP_COLOUR_NATIVE", "COOP_COLOUR_PROBE", "COOP_COLOUR_PROBE_TEST", "COOP_COLOUR_DARK", "COOP_COLOUR_DIAG",   // the Links' player colours (coop_puppet.c); no menu row
     "COOP_RESET_POOLS",   // the room's maker resets the pools when it changes to a value other than 0 (coop_game.c); no row (the tab's Reset the pools)
 };
 

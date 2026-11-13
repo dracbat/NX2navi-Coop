@@ -172,3 +172,16 @@ site zstd main f5c2c  94000015 9536acd5   # bl the stream feed -> page+0xf80
 # on the patch page (+0xf70), which puts the free camera's vectors into those registers and does the instruction's
 # own work.
 site freecam main 4c4e50 1e624011 95277048   # fcvt s17, d0 -> bl page+0xf70
+
+# ---- NX2navi Co-op sets (keep last) ---------------------------------------------------------------------------------
+# The sets below come after every set above, in this order, so that the sets above keep their numbers: a merge of a
+# newer table puts this block after the new sets again. The runtime finds a set by its name (rt_patch_set), so the
+# numbers these sets get do not matter to it.
+#
+# Co-op puppets (runtime/coop_puppet.c): the framework's per-frame update (main+0x6e6be0) steps the time manager
+# through main+0x3b4e300 (x0 the manager, s0 the frame step) before it updates the scene. The call goes to the host
+# function on the patch page (+0xf00), which makes it and then spawns, poses and removes the other players' puppets on
+# the game's update thread, between two frames. Switched on only while there is puppet work (rt_patch_switch).
+set coop_puppet NX2NAVI_COOP_PUPPET_HOOK  0
+site coop_puppet main 6e6dd8 94d19d4a 951ee84a   # bl main+0x3b4e300 -> page+0xf00
+site coop_puppet main 6e70f8 94d19c82 951ee782   # the same call on the update's other path (bit 1 of update +0xd38)
