@@ -23,6 +23,8 @@
 extern "C" {
 #include "cfg.h"
 #include "coop.h"
+#include "coop_colours.h"
+#include "coop_ext_wire.h"
 #include "platform/platform.h"
 #include "ui/menu.h"
 #include "ui_text.h"
@@ -107,10 +109,31 @@ static void open_window(int page, const char *ret) {
     snprintf(g_return, sizeof g_return, "%s", ret);
 }
 
+// The colours' names (coop_colours.h: green, red, blue, purple).
+static const UiTextId kColourText[COOP_COLOURS] = {UI_MENU_COOP_COLOUR_GREEN, UI_MENU_COOP_COLOUR_RED, UI_MENU_COOP_COLOUR_BLUE,
+                                                   UI_MENU_COOP_COLOUR_PURPLE};
+
+// The colour this player picks (coop_colours.c): Auto, and each colour no other player of the room has now; this
+// player's own colour and the one set stay in the list, so that the row always shows what is set. In a room it stands
+// under the players, whose rows show their colours; out of one, with the settings.
+static void colour_row(void) {
+    static const char *const values[1 + COOP_COLOURS] = {"auto", "green", "red", "blue", "purple"};
+    const char *vals[1 + COOP_COLOURS], *names[1 + COOP_COLOURS];
+    const char *set = cfg_value("NX2NAVI_COOP_COLOUR");
+    const int own = coop_colours_self();
+    int n = 0;
+    vals[n] = values[0], names[n++] = menu_text(UI_MENU_COOP_COLOUR_AUTO);
+    for (int c = 0; c < COOP_COLOURS; c++)
+        if (!coop_colours_held_by_other(c) || c == own || !strcmp(set, values[1 + c]))
+            vals[n] = values[1 + c], names[n++] = menu_text(kColourText[c]);
+    opt_choice_list("NX2NAVI_COOP_COLOUR", UI_MENU_COOP_COLOUR, vals, names, n, UI_MENU_COOP_COLOUR_DESC);
+}
+
 static void settings_rows(void) {
     opt_group(UI_MENU_COOP_SETTINGS);
     opt_toggle("NX2NAVI_COOP_SHARE", UI_MENU_COOP_SHARE, UI_MENU_COOP_SHARE_DESC);
     opt_toggle("NX2NAVI_COOP_NAMES", UI_MENU_COOP_NAMES, UI_MENU_COOP_NAMES_DESC);
+    if (!in_room()) colour_row();
     opt_toggle("NX2NAVI_COOP_CHAT", UI_MENU_COOP_CHAT_SHOW, UI_MENU_COOP_CHAT_SHOW_DESC);
     opt_toggle("NX2NAVI_COOP_STEAM", UI_MENU_COOP_ON, UI_MENU_COOP_ON_DESC);
 }
@@ -177,10 +200,14 @@ static void rows_room(void) {
     opt_group(UI_MENU_COOP_PLAYERS);
     for (int i = 0; i < g_view.n; i++) {
         const CoopPlayer &p = g_view.players[i];
-        char id[40], note[96], where[COOP_SCENE_CAP + 16];
+        char id[40], note[160] = "", where[COOP_SCENE_CAP + 16];
         snprintf(id, sizeof id, "##coop_player%d", i);
-        snprintf(note, sizeof note, "%s%s%s", p.self ? menu_text(UI_MENU_COOP_YOU) : "", p.self && p.host ? ", " : "",
-                 p.host ? menu_text(UI_MENU_COOP_HOST) : "");
+        // the note: their colour in the room (coop_colours.c), you, host
+        const int col = coop_colours_of(p.id);
+        const char *parts[3] = {col >= 0 && col < COOP_COLOURS ? menu_text(kColourText[col]) : nullptr,
+                                p.self ? menu_text(UI_MENU_COOP_YOU) : nullptr, p.host ? menu_text(UI_MENU_COOP_HOST) : nullptr};
+        for (const char *s : parts)
+            if (s) snprintf(note + strlen(note), sizeof note - strlen(note), "%s%s", note[0] ? ", " : "", s);
         const bool here = p.self ? false : p.has_pose && p.pose.scene[0];
         snprintf(where, sizeof where, "%s", p.self ? "" : here ? p.pose.scene : menu_text(UI_MENU_COOP_PLAYER_AWAY));
         const bool removable = g_view.host && !p.self;
@@ -192,6 +219,7 @@ static void rows_room(void) {
             open_window(P_REMOVE, id);
         }
     }
+    colour_row();
     opt_group(UI_MENU_COOP_CHAT);
     for (int i = 0; i < g_view.nchat; i++) {
         char line[COOP_NAME_CAP + COOP_CHAT_CAP + 8];

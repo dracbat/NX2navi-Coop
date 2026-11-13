@@ -287,7 +287,10 @@ typedef enum {
     UI_MENU_COOP_N_FULL, UI_MENU_COOP_N_REFUSED, UI_MENU_COOP_N_NOT_OURS, UI_MENU_COOP_N_OTHER_VERSION,
     UI_MENU_COOP_N_REMOVED, UI_MENU_COOP_N_HOST_SILENT, UI_MENU_COOP_N_LOST, UI_MENU_COOP_N_LEFT,
     UI_MENU_COOP_LOCAL, UI_MENU_COOP_TOAST_INVITE,
-    UI_MENU_LAST_ID = UI_MENU_COOP_TOAST_INVITE,
+    // the colour this player picks in a room, and the colours' names (ui/coop_page.cpp, coop_colours.c)
+    UI_MENU_COOP_COLOUR, UI_MENU_COOP_COLOUR_DESC, UI_MENU_COOP_COLOUR_AUTO, UI_MENU_COOP_COLOUR_GREEN,
+    UI_MENU_COOP_COLOUR_RED, UI_MENU_COOP_COLOUR_BLUE, UI_MENU_COOP_COLOUR_PURPLE,
+    UI_MENU_LAST_ID = UI_MENU_COOP_COLOUR_PURPLE,
     // the boot screen while the boot prewarm prepares shaders and pipelines (boot.c, ui/menu.cpp menu_boot_frame)
     UI_BOOT_TITLE, UI_BOOT_STARTING,
     UI_BOOT_SHADERS, UI_BOOT_PIPELINES,   // printf: "%lld" done, "%lld" total
