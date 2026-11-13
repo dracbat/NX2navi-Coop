@@ -1,4 +1,4 @@
-// Co-op name tags: each other player's name above his Link, in his player
+// Co-op name tags: each other player's name above their Link, in their player
 // colour, drawn over the game's picture by the menu overlay (ui/coop_tags_view.cpp, called from ui/menu.cpp's overlay
 // frame). The game thread publishes where the shown players' Links stand (coop_puppet.c, the frame hook, before the
 // frame's poses move the puppets); the present thread projects them with the camera that drew the presented frame
@@ -6,7 +6,7 @@
 //
 // Settings (environment or nx2navi.ini, no menu row; read again when cfg_version changes):
 //   NX2NAVI_COOP_TAGS       "0" off; on otherwise (default on)
-//   NX2NAVI_COOP_TAGS_TEST  test: "1" also tags the local Link (his co-op name, else "Link") and the shadow puppet
+//   NX2NAVI_COOP_TAGS_TEST  test: "1" also tags the local Link (its co-op name, else "Link") and the shadow puppet
 //                           (NX2NAVI_COOP_PUPPET_TEST=shadow, "Shadow"); "ruler" adds marks every 0.25 m from 0 to
 //                           2.5 m above their origins, for calibrating the head height
 //   NX2NAVI_COOP_TAGS_LOG   "1": a line a second (camera, anchors, where each tag went or why it is hidden)
@@ -16,7 +16,7 @@
 #pragma once
 #include <stdint.h>
 
-#include "coop_proto.h"   // COOP_NAME_MAX
+#include "coop.h"   // COOP_NAME_CAP
 
 enum { COOP_TAG_MAX = 10 };
 enum { COOP_TAG_MEMBER, COOP_TAG_TEST_LINK, COOP_TAG_TEST_SHADOW };
@@ -26,7 +26,7 @@ typedef struct {
     uint8_t adult;                   // the Link is an adult (the head height)
     int8_t colour;                   // 0 green, 1 red, 2 blue, 3 purple (coop_puppet.c COL_*); -1 none
     float pos[3];                    // the actor's origin (+0x31c), metres
-    char name[COOP_NAME_MAX + 1];    // cleaned UTF-8 (coop_proto.h); "" when unknown
+    char name[COOP_NAME_CAP];        // cleaned UTF-8, as the room has it (coop.h); "" when unknown
 } CoopTagAnchor;
 
 // What the game thread hands over once a frame.
