@@ -18,6 +18,18 @@
 // A player who joins takes the room's counts, whatever their own save had. Meanwhile a game's own count is the room's
 // plus its changes the host has not acked yet, so that a key picked up is not taken back while it is on its way.
 //
+// One key a door. Each world has its own copy of a locked door, which the room's progress opens in the other worlds
+// only after it was opened in one: two players can each open the same door in their own world before either game
+// knows of the other's. So a change carries the place where Link stood when it happened (KEY), and the host counts a
+// key used within DOOR_NEAR of the place of a key the room already paid, in the same dungeon, as that door's: taken
+// and acked, but not counted, so that the KEYS which acks it sets that player's count back to the room's and they have
+// their key again. The host's own uses go the same way. The small-key doors of a dungeon stand at least 6.8 m apart in
+// every dungeon (the closest two are in the Gerudo Training Ground; the Water Temple has two above each other, 7.9 m
+// apart), and Link opens a door standing at it (the game's event that unlocks one moves him to a place before the
+// lock), so two keys used at one door, from either side, fall within DOOR_NEAR of each other and keys used at two
+// doors do not. The host remembers the places of the keys used in this room (PAID of them, the oldest giving way); a
+// new host starts with none, so a door opened in two worlds about a change of host can still cost two keys.
+//
 // The game's side, at each present (coop_keys_present): while the gate of coop_game.c is open (a save played, Link in
 // the world, no load or scene change), each count is read. A count with a set of it still waiting on the ring is
 // neither read nor written in that frame, so that no write of this file overwrites the game's own change and no change
@@ -29,6 +41,7 @@
 // NX2NAVI_COOP_SHARE too, since a door opens in every world only with progress shared. A game with own keeps its keys to
 // itself and takes no counts; with a host that keeps own, the room has no pool and every player's keys stay their own.
 // Lines about what other players sent go through coop_ext_log; no line names a player's id.
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -45,6 +58,8 @@
 
 #define MGR_PTR (MOD_MAIN_BASE + 0x4e842a8ull)
 #define SET_INT_FN (MOD_MAIN_BASE + 0x163b70ull)
+#define PLAYER_PTR (MOD_MAIN_BASE + 0x4e371d0ull)
+#define DOOR_NEAR 3.4f             // metres: keys used this close in one dungeon opened one door ("One key a door")
 
 enum {
     C_INT = 0x0c8, CN_COUNT = 0x08, CN_ENTRIES = 0x10, CN_TABLE = 0x18, CN_CAP = 0x24,
@@ -54,6 +69,7 @@ enum {
     RESEND_MS = 3000,          // a change not acked goes to the host again this often
     BEAT_MS = 10000,           // the host's KEYS to everyone
     QUIET_MS = 30000,          // no KEYS from the host for this long: the room has no pool (its host keeps own keys)
+    PAID = 64,                 // the places of keys used that the host remembers (the game has 43 small-key doors)
 };
 
 // The dungeons that hold small keys: the hash of their SmallKeyNum flag, the most keys each one holds (its chests, keys
@@ -71,7 +87,14 @@ _Static_assert(ND <= COOP_KEYS_DUNGEONS, "a KEYS holds every dungeon");
 typedef struct {
     uint32_t seq;
     int8_t d, delta;               // the dungeon (an index in the table), the keys picked up (> 0) or used (< 0)
+    uint8_t placed;                // at: where Link stood when the change happened
+    float at[3];
 } Change;
+
+typedef struct {
+    int8_t d;                      // the dungeon
+    float at[3];                   // where Link stood when a key was used there
+} Paid;
 
 // Shared between the co-op thread and the game's thread, under lock.
 static struct {
@@ -95,6 +118,9 @@ static struct {
     int dirty;                      // KEYS to everyone at the next step
     unsigned greet;                 // and to these seats (bit s)
     uint64_t beat_at;
+    // the host's: the places of the keys used in this room, one a door ("One key a door")
+    Paid paid[PAID];
+    int npaid;
 } K;
 
 // The co-op thread's own.
@@ -145,6 +171,24 @@ static void counts_text(const uint8_t *keys, char *out, size_t cap) {
 
 static const char *change_text(int delta) { return delta > 0 ? "picked up" : "used"; }
 
+// The place of a key the room already paid, in dungeon d, that at is within DOOR_NEAR of (lock held): its index, or -1.
+static int paid_near(int d, const float at[3]) {
+    for (int i = 0; i < K.npaid; i++) {
+        if (K.paid[i].d != d) continue;
+        float dx = K.paid[i].at[0] - at[0], dy = K.paid[i].at[1] - at[1], dz = K.paid[i].at[2] - at[2];
+        if (dx * dx + dy * dy + dz * dz <= DOOR_NEAR * DOOR_NEAR) return i;
+    }
+    return -1;
+}
+
+// A key used in dungeon d at at, counted (lock held): its door is paid for.
+static void paid_add(int d, const float at[3]) {
+    if (K.npaid == PAID) memmove(K.paid, K.paid + 1, sizeof K.paid[0] * (PAID - 1)), K.npaid--;   // the oldest gives way
+    K.paid[K.npaid].d = (int8_t)d;
+    memcpy(K.paid[K.npaid].at, at, sizeof K.paid[0].at);
+    K.npaid++;
+}
+
 // ---- the co-op thread (and under lock)
 
 // Nothing of a room stays: another room, out of one, or the pool switched off or on. The game's counts stay as they are.
@@ -157,6 +201,7 @@ static void reset_room(void) {
     if (!plat_random(&s, sizeof s) || !s) s = (uint32_t)plat_now_ns() | 1;
     K.sess = s;
     K.dirty = 0, K.greet = 0, K.beat_at = 0;
+    K.npaid = 0;
     T.held_from = 0, T.said_any = 0;
 }
 
@@ -245,13 +290,26 @@ static void on_key(int seat, const uint8_t *b, size_t n, void *user) {
         if (a < 0) a = 0;
     }
     K.ack[a].id = id, K.ack[a].sess = m.sess, K.ack[a].seq = m.seq;
+    int keys = m.delta > 0 ? m.delta : -m.delta, placed = m.delta < 0 && (m.flags & COOP_KEY_PLACE);
+    if (placed && paid_near(d, m.xyz) >= 0) {   // a door the room paid a key for already: taken, not counted
+        K.greet |= 1u << seat;   // the KEYS that acks it sets the player's count back to the room's
+        int has = K.keys[d];
+        plat_mutex_unlock(&K.lock);
+        coop_ext_log(seat, "keys: seat %d '%s' used %d small key%s in %s at %.1f %.1f %.1f, at a door the room already paid a key "
+                     "for: not counted, they have it back (the room has %d)", seat, seat_name(seat), keys, keys == 1 ? "" : "s",
+                     dungeons[d].name, m.xyz[0], m.xyz[1], m.xyz[2], has);
+        return;
+    }
+    if (placed) paid_add(d, m.xyz);
     int was = K.keys[d], now = clamp_keys(d, was + m.delta);
     K.keys[d] = (uint8_t)now;
     K.serial++, K.dirty = 1;
     plat_mutex_unlock(&K.lock);
-    coop_ext_log(seat, "keys: seat %d '%s' %s %d small key%s in %s: the room has %d (was %d)%s", seat, seat_name(seat),
-                 change_text(m.delta), m.delta > 0 ? m.delta : -m.delta, m.delta == 1 || m.delta == -1 ? "" : "s", dungeons[d].name, now,
-                 was, now != was + m.delta ? ", within 0 and the keys the dungeon holds" : "");
+    char where[64] = "";
+    if (placed) snprintf(where, sizeof where, " at %.1f %.1f %.1f", m.xyz[0], m.xyz[1], m.xyz[2]);
+    coop_ext_log(seat, "keys: seat %d '%s' %s %d small key%s in %s%s: the room has %d (was %d)%s", seat, seat_name(seat),
+                 change_text(m.delta), keys, keys == 1 ? "" : "s", dungeons[d].name, where, now, was,
+                 now != was + m.delta ? ", within 0 and the keys the dungeon holds" : "");
 }
 
 static void on_view(const CoopExtView *v, void *user) {
@@ -372,7 +430,9 @@ static void on_tick(uint64_t now, void *user) {
             if (now >= K.resend_at) K.sent = 0, K.resend_at = now + RESEND_MS;
             while (K.sent < K.npend) {   // in order, and none after one the room's queue did not take
                 const Change *p = &K.pend[K.sent];
-                CoopKeyMsg m = {.sess = K.sess, .seq = p->seq, .hash = dungeons[p->d].hash, .delta = p->delta};
+                CoopKeyMsg m = {.sess = K.sess, .seq = p->seq, .hash = dungeons[p->d].hash, .delta = p->delta,
+                                .flags = p->placed ? COOP_KEY_PLACE : 0};
+                if (p->placed) memcpy(m.xyz, p->at, sizeof m.xyz);
                 size_t n = coop_key_pack(&m, b, sizeof b);
                 if (!n || !coop_ext_send(K.host, COOP_K_KEY, b, n, 1)) break;
                 K.sent++;
@@ -394,6 +454,18 @@ void coop_keys_init(void) {
 // ---- the game's thread
 
 static int rd_ok(uint64_t a, uint64_t n) { return a >= 0x1000 && mem_readable(a, n); }
+
+// Where Link stands: the Player actor [[main+0x4e371d0] + 0x480] while its name, [+0x20], reads "Player", its position
+// in metres at +0x31c (coop_game.c reads him the same way). 0 when there is none, or the place does not go into a KEY.
+static int link_place(float at[3]) {
+    uint64_t m = rd_ok(PLAYER_PTR, 8) ? LD64(PLAYER_PTR) : 0, a = rd_ok(m + 0x480, 8) ? LD64(m + 0x480) : 0;
+    uint64_t name = rd_ok(a + 0x20, 8) ? LD64(a + 0x20) : 0;
+    if (!rd_ok(name, 7) || memcmp((const void *)(uintptr_t)name, "Player", 7) || !rd_ok(a + 0x31c, 12)) return 0;
+    memcpy(at, (const void *)(uintptr_t)(a + 0x31c), 12);
+    for (int i = 0; i < 3; i++)
+        if (!isfinite(at[i]) || fabsf(at[i]) > 1e6f) return 0;
+    return 1;
+}
 
 // The Int entry of hash, 0 when absent (coop_game.c entry_of, for the Int container).
 static uint64_t int_entry(uint64_t mgr, uint32_t hash) {
@@ -468,32 +540,43 @@ void coop_keys_present(Cpu *c) {
         rt_log("coop: keys: the room's small keys start from this save's (this game is the room's host): %s", line);
     }
     plat_mutex_unlock(&K.lock);
-    // what changed here since the last reading or writing: keys picked up or used in this game
+    // what changed here since the last reading or writing: keys picked up or used in this game, where Link stands
     int changes = 0;
     Change ch[COOP_KEYS_DUNGEONS];
+    float at[3] = {0, 0, 0};
+    int placed = -1;
     for (int d = 0; d < ND; d++) {
         if (!ready[d] || cur[d] == G.seen[d]) continue;
         int delta = cur[d] - G.seen[d];
         G.seen[d] = cur[d];
         if (delta > COOP_KEYS_MAX) delta = COOP_KEYS_MAX;
         if (delta < -COOP_KEYS_MAX) delta = -COOP_KEYS_MAX;
-        ch[changes++] = (Change){0, (int8_t)d, (int8_t)delta};
+        if (placed < 0) placed = link_place(at);
+        ch[changes] = (Change){0, (int8_t)d, (int8_t)delta, (uint8_t)placed, {at[0], at[1], at[2]}};
+        changes++;
     }
     int32_t target[COOP_KEYS_DUNGEONS];
     plat_mutex_lock(&K.lock);
     int host = hosting(), have = K.have;
     for (int i = 0; i < changes; i++) {
-        int d = ch[i].d, n = ch[i].delta > 0 ? ch[i].delta : -ch[i].delta;
-        if (host && have) {
+        int d = ch[i].d, n = ch[i].delta > 0 ? ch[i].delta : -ch[i].delta, door = ch[i].delta < 0 && ch[i].placed;
+        char where[64] = "";
+        if (ch[i].placed) snprintf(where, sizeof where, " at %.1f %.1f %.1f", ch[i].at[0], ch[i].at[1], ch[i].at[2]);
+        if (host && have && door && paid_near(d, ch[i].at) >= 0) {   // the write below sets this game's count back
+            rt_log("coop: keys: this game used %d small key%s in %s%s, at a door the room already paid a key for: not counted, "
+                   "this game has it back (the room has %d)", n, n == 1 ? "" : "s", dungeons[d].name, where, K.keys[d]);
+        } else if (host && have) {
+            if (door) paid_add(d, ch[i].at);
             int was = K.keys[d], now = clamp_keys(d, was + ch[i].delta);
             K.keys[d] = (uint8_t)now, K.serial++, K.dirty = 1;
-            rt_log("coop: keys: this game %s %d small key%s in %s: the room has %d (was %d)%s", change_text(ch[i].delta), n,
-                   n == 1 ? "" : "s", dungeons[d].name, now, was, now != was + ch[i].delta ? ", within 0 and the keys the dungeon holds" : "");
+            rt_log("coop: keys: this game %s %d small key%s in %s%s: the room has %d (was %d)%s", change_text(ch[i].delta), n,
+                   n == 1 ? "" : "s", dungeons[d].name, where, now, was,
+                   now != was + ch[i].delta ? ", within 0 and the keys the dungeon holds" : "");
         } else if (K.npend < PENDING) {
             ch[i].seq = ++K.seq;
             K.pend[K.npend++] = ch[i];
-            rt_log("coop: keys: this game %s %d small key%s in %s (%d now): change %u goes to the room's host", change_text(ch[i].delta),
-                   n, n == 1 ? "" : "s", dungeons[d].name, cur[d], ch[i].seq);
+            rt_log("coop: keys: this game %s %d small key%s in %s%s (%d now): change %u goes to the room's host",
+                   change_text(ch[i].delta), n, n == 1 ? "" : "s", dungeons[d].name, where, cur[d], ch[i].seq);
         } else {
             rt_log("coop: keys: this game %s %d small key%s in %s, but %d changes already wait for the room's host: this one "
                    "is not sent", change_text(ch[i].delta), n, n == 1 ? "" : "s", dungeons[d].name, PENDING);
