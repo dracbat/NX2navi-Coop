@@ -131,6 +131,8 @@ static void settings_rows(void) {
     opt_toggle("NX2NAVI_COOP_SHARE", UI_MENU_COOP_SHARE, UI_MENU_COOP_SHARE_DESC);
     opt_toggle("NX2NAVI_COOP_NAMES", UI_MENU_COOP_NAMES, UI_MENU_COOP_NAMES_DESC);
     if (!in_room()) colour_row();
+    // the room's small keys (coop_keys.c): pool, one count per dungeon kept by the host, or each player's own
+    opt_toggle_value("NX2NAVI_COOP_KEYS", UI_MENU_COOP_KEYS, UI_MENU_COOP_KEYS_DESC, "pool", "own");
     opt_toggle("NX2NAVI_COOP_CHAT", UI_MENU_COOP_CHAT_SHOW, UI_MENU_COOP_CHAT_SHOW_DESC);
     opt_toggle("NX2NAVI_COOP_STEAM", UI_MENU_COOP_ON, UI_MENU_COOP_ON_DESC);
 }
