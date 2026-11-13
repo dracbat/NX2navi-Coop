@@ -162,9 +162,11 @@ int coop_colours_parse(const uint8_t *b, size_t n, CoopColoursMsg *m);
 // most 151 bytes. KEY (a player to the host, reliable, until a KEYS acks it): u8 version 1, u32 sess (the sender's,
 // random and not 0, another at each room), u32 seq (1 for the first change in that sess, one more for each next), u32
 // the counter's hash (not 0), i8 the change (-COOP_KEYS_MAX..COOP_KEYS_MAX, not 0: keys picked up, or used when
-// below 0). 14 bytes.
+// below 0), u8 flags (COOP_KEY_PLACE: the place below is where Link stood at the change), f32 x y z (that place:
+// finite, at most 1e6 from the origin on each axis; all 0 without COOP_KEY_PLACE). 27 bytes.
 enum { COOP_KEYS_VERSION = 1, COOP_KEYS_DUNGEONS = 16, COOP_KEYS_MAX = 15, COOP_KEYS_MSG_MAX = 7 + 5 * 16 + 16 * COOP_PLAYERS,
-       COOP_KEY_VERSION = 1, COOP_KEY_MSG = 14 };
+       COOP_KEY_VERSION = 1, COOP_KEY_MSG = 27 };
+enum { COOP_KEY_PLACE = 1 };   // KEY flags
 typedef struct {
     uint32_t serial;
     uint8_t n, nack;
@@ -174,6 +176,8 @@ typedef struct {
 typedef struct {
     uint32_t sess, seq, hash;
     int8_t delta;
+    uint8_t flags;               // COOP_KEY_PLACE
+    float xyz[3];                // where Link stood (metres, in the area's frame), with COOP_KEY_PLACE
 } CoopKeyMsg;
 size_t coop_keys_pack(const CoopKeysMsg *m, uint8_t *out, size_t cap);
 int coop_keys_parse(const uint8_t *b, size_t n, CoopKeysMsg *m);

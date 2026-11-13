@@ -29,9 +29,10 @@ Modes (any together):
                              game's Link was first seen (the game keeps 16 of one sender's at most)
     --era child|adult[:AREA[:X,Y,Z]]@S   a change of era, S seconds after the game's Link was first seen, with a place of
                              that era (default: where the game's Link stands)
-    --key HASH:N@S           a small key change (KEY) to the room's host, S seconds after the game's Link was first seen:
-                             N keys picked up (N > 0) or used (N < 0) in the dungeon of that small-key counter (hex hash);
-                             may be given again. Each must be taken: a later KEYS of the host acks it
+    --key HASH:N[:X,Y,Z]@S   a small key change (KEY) to the room's host, S seconds after the game's Link was first seen:
+                             N keys picked up (N > 0) or used (N < 0) in the dungeon of that small-key counter (hex hash),
+                             with X,Y,Z the place where this peer's Link stood (the host counts one key a door); may be
+                             given again. Each must be taken: a later KEYS of the host acks it
 
 It prints what the game sends, with the kinds' names, and ends with "peer: ok" or "peer: FAILED" for what its modes
 check; python's exit code says the same.
@@ -359,15 +360,20 @@ def keys_parse(b):
     return m
 
 
+KEY_PLACE = 1
+
+
 def key_pack(m):
     need(m['sess'] and m['seq'] and m['hash'] and m['delta'] and -KEYS_MAX <= m['delta'] <= KEYS_MAX)
-    return struct.pack('<BIIIb', 1, m['sess'], m['seq'], m['hash'], m['delta'])
+    need(m['flags'] in (0, KEY_PLACE))
+    need(all(bounded(c, 1e6) for c in m['xyz']) if m['flags'] else all(c == 0.0 for c in m['xyz']))
+    return struct.pack('<BIIIbB3f', 1, m['sess'], m['seq'], m['hash'], m['delta'], m['flags'], *m['xyz'])
 
 
 def key_parse(b):
-    need(len(b) == 14 and b[0] == 1)
-    _, sess, seq, h, delta = struct.unpack('<BIIIb', b)
-    m = {'sess': sess, 'seq': seq, 'hash': h, 'delta': delta}
+    need(len(b) == 27 and b[0] == 1)
+    _, sess, seq, h, delta, flags, x, y, z = struct.unpack('<BIIIbB3f', b)
+    m = {'sess': sess, 'seq': seq, 'hash': h, 'delta': delta, 'flags': flags, 'xyz': [x, y, z]}
     key_pack(m)
     return m
 
@@ -408,7 +414,7 @@ VECTOR_HEADER = """\
 # pick <name> <hex> <pick>
 # colours <name> <hex> <count> (<id> <colour>)...
 # keys <name> <hex> <serial> <count> (<hash> <keys>)... <acks> (<id> <sess> <seq>)...
-# key <name> <hex> <sess> <seq> <hash> <change>
+# key <name> <hex> <sess> <seq> <hash> <change> <flags> <x> <y> <z>
 # reject <kind> <name> <hex>                       the kind's parser must refuse it
 """
 
@@ -469,9 +475,13 @@ def vector_set():
              (K_KEYS, 'keys-full', {'serial': 0xFFFFFFFF, 'd': [(0x1000 + i, i % (KEYS_MAX + 1)) for i in range(KEYS_DUNGEONS)],
                                     'acks': [(2**64 - 1, 1, 0), (1, 0xFFFFFFFF, 0xFFFFFFFF), (0x123456789ABCDEF0, 2, 3),
                                              (12345, 4, 1)]})]
-    good += [(K_KEY, 'key-picked-up', {'sess': 5, 'seq': 1, 'hash': 0x7DD79D10, 'delta': 1}),
-             (K_KEY, 'key-used', {'sess': 0xFFFFFFFF, 'seq': 0xFFFFFFFF, 'hash': 0xFFFFFFFF, 'delta': -1}),
-             (K_KEY, 'key-edges', {'sess': 1, 'seq': 2, 'hash': 1, 'delta': -KEYS_MAX})]
+    no_place = {'flags': 0, 'xyz': [0.0] * 3}
+    good += [(K_KEY, 'key-picked-up', dict(no_place, sess=5, seq=1, hash=0x7DD79D10, delta=1)),
+             (K_KEY, 'key-used', {'sess': 0xFFFFFFFF, 'seq': 0xFFFFFFFF, 'hash': 0xFFFFFFFF, 'delta': -1, 'flags': KEY_PLACE,
+                                  'xyz': [f32(-10.25), f32(100.0), f32(-21.5)]}),
+             (K_KEY, 'key-edges', {'sess': 1, 'seq': 2, 'hash': 1, 'delta': -KEYS_MAX, 'flags': KEY_PLACE,
+                                   'xyz': [f32(1e6), f32(-1e6), -0.0]}),
+             (K_KEY, 'key-used-no-place', dict(no_place, sess=3, seq=4, hash=0x90237092, delta=-2))]
 
     def raw(kind, m):
         return PACKERS[kind](m)
@@ -531,11 +541,17 @@ def vector_set():
             (K_KEYS, 'keys-id-zero', kk[:12] + b'\x00' * 8 + kk[20:]),
             (K_KEYS, 'keys-sess-zero', kk[:20] + b'\x00' * 4 + kk[24:]),
             (K_KEYS, 'keys-same-id', kk[:11] + b'\x02' + kk[12:] * 2)]
-    ke = raw(K_KEY, {'sess': 5, 'seq': 1, 'hash': 0x7DD79D10, 'delta': 1})
-    bad += [(K_KEY, 'key-version', b'\x02' + ke[1:]), (K_KEY, 'key-none', ke[:13] + b'\x00'),
-            (K_KEY, 'key-sixteen', ke[:13] + b'\x10'), (K_KEY, 'key-minus-sixteen', ke[:13] + b'\xf0'),
+    ke = raw(K_KEY, {'sess': 5, 'seq': 1, 'hash': 0x7DD79D10, 'delta': -1, 'flags': KEY_PLACE,
+                     'xyz': [f32(-10.25), f32(100.0), f32(-21.5)]})
+    bad += [(K_KEY, 'key-version', b'\x02' + ke[1:]), (K_KEY, 'key-none', ke[:13] + b'\x00' + ke[14:]),
+            (K_KEY, 'key-sixteen', ke[:13] + b'\x10' + ke[14:]), (K_KEY, 'key-minus-sixteen', ke[:13] + b'\xf0' + ke[14:]),
             (K_KEY, 'key-sess-zero', ke[:1] + b'\x00' * 4 + ke[5:]), (K_KEY, 'key-seq-zero', ke[:5] + b'\x00' * 4 + ke[9:]),
-            (K_KEY, 'key-hash-zero', ke[:9] + b'\x00' * 4 + ke[13:])]
+            (K_KEY, 'key-hash-zero', ke[:9] + b'\x00' * 4 + ke[13:]),
+            (K_KEY, 'key-flag-unknown', ke[:14] + b'\x03' + ke[15:]),
+            (K_KEY, 'key-place-without-flag', ke[:14] + b'\x00' + ke[15:]),
+            (K_KEY, 'key-place-nan', ke[:15] + struct.pack('<f', float('nan')) + ke[19:]),
+            (K_KEY, 'key-place-far', ke[:23] + struct.pack('<f', 2e6) + ke[27:]),
+            (K_KEY, 'key-short-place', ke[:23])]
     return good, bad
 
 
@@ -566,7 +582,7 @@ def vector_line(kind, name, m):
     elif kind == K_KEYS:
         f = [m['serial'], len(m['d'])] + [x for e in m['d'] for x in e] + [len(m['acks'])] + [x for e in m['acks'] for x in e]
     elif kind == K_KEY:
-        f = [m['sess'], m['seq'], m['hash'], m['delta']]
+        f = [m['sess'], m['seq'], m['hash'], m['delta'], m['flags']] + [fl(x) for x in m['xyz']]
     else:
         f = [len(m)] + [x for e in m for x in e]
     return ' '.join([KIND_NAMES[kind].lower(), name, h] + [str(x) for x in f])
@@ -678,7 +694,8 @@ def describe(kind, body):
         return (f"KEYS serial {m['serial']}: " + (', '.join(f'{h:08x}={k}' for h, k in m['d']) or 'no counts') +
                 f"; {len(m['acks'])} acks")
     if kind == K_KEY:
-        return f"KEY {m['delta']:+d} for {m['hash']:08x} (seq {m['seq']})"
+        return (f"KEY {m['delta']:+d} for {m['hash']:08x} (seq {m['seq']})" +
+                (' at %.1f %.1f %.1f' % tuple(m['xyz']) if m['flags'] & KEY_PLACE else ''))
     return 'COLOURS ' + ', '.join(f'{COLOUR_NAMES[c]}' for _, c in m)
 
 
@@ -804,8 +821,9 @@ def main():
         timed.append([float(s), ('flags', [int(h, 16) for h in hashes.split(',') if h]), False])
     for spec in a.key:
         what, at = parse_at(spec)
-        h, _, delta = what.partition(':')
-        timed.append([at, ('key', int(h, 16), int(delta)), False])
+        h, _, rest = what.partition(':')
+        delta, _, xyz = rest.partition(':')
+        timed.append([at, ('key', int(h, 16), int(delta), [f32(float(v)) for v in xyz.split(',')] if xyz else None), False])
     if a.era:
         what, at = parse_at(a.era)
         era, _, place = what.partition(':')
@@ -878,8 +896,11 @@ def main():
                     print(f'peer: TIME jump to {what[1] // 3600:02d}:{what[1] // 60 % 60:02d}, order {order & 0xFFFFFFFF}')
                 elif what[0] == 'key':
                     key_seq += 1
-                    send(K_KEY, key_pack({'sess': key_sess, 'seq': key_seq, 'hash': what[1], 'delta': what[2]}))
-                    print(f'peer: KEY {what[2]:+d} for {what[1]:08x} (seq {key_seq})')
+                    place = what[3]
+                    send(K_KEY, key_pack({'sess': key_sess, 'seq': key_seq, 'hash': what[1], 'delta': what[2],
+                                          'flags': KEY_PLACE if place else 0, 'xyz': place or [0.0] * 3}))
+                    print(f'peer: KEY {what[2]:+d} for {what[1]:08x} (seq {key_seq})' +
+                          (' at %.1f %.1f %.1f' % tuple(place) if place else ''))
                 elif what[0] == 'flood':
                     area = (host_pose[0] if host_pose else '').encode()
                     for i in range(what[1]):

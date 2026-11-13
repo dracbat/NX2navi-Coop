@@ -448,22 +448,28 @@ int coop_keys_parse(const uint8_t *b, size_t n, CoopKeysMsg *m) {
 }
 
 static int key_ok(const CoopKeyMsg *m) {
-    return m->sess && m->seq && m->hash && m->delta && m->delta >= -COOP_KEYS_MAX && m->delta <= COOP_KEYS_MAX;
+    if (!m->sess || !m->seq || !m->hash || !m->delta || m->delta < -COOP_KEYS_MAX || m->delta > COOP_KEYS_MAX ||
+        m->flags & ~COOP_KEY_PLACE)
+        return 0;
+    if (m->flags & COOP_KEY_PLACE) return xyz_ok(m->xyz);
+    return m->xyz[0] == 0.0f && m->xyz[1] == 0.0f && m->xyz[2] == 0.0f;
 }
 
 size_t coop_key_pack(const CoopKeyMsg *m, uint8_t *out, size_t cap) {
     if (!key_ok(m) || cap < COOP_KEY_MSG) return 0;
     out[0] = COOP_KEY_VERSION;
     put32(out + 1, m->sess), put32(out + 5, m->seq), put32(out + 9, m->hash);
-    out[13] = (uint8_t)m->delta;
+    out[13] = (uint8_t)m->delta, out[14] = m->flags;
+    xyz_put(out + 15, m->xyz);
     return COOP_KEY_MSG;
 }
 
 int coop_key_parse(const uint8_t *b, size_t n, CoopKeyMsg *m) {
     memset(m, 0, sizeof *m);
     if (n != COOP_KEY_MSG || b[0] != COOP_KEY_VERSION) return 0;
-    CoopKeyMsg r = {.sess = get32(b + 1), .seq = get32(b + 5), .hash = get32(b + 9), .delta = (int8_t)b[13]};
-    if (!key_ok(&r)) return 0;
+    CoopKeyMsg r = {.sess = get32(b + 1), .seq = get32(b + 5), .hash = get32(b + 9), .delta = (int8_t)b[13], .flags = b[14]};
+    size_t at = 15;
+    if (!xyz_take(b, n, &at, r.xyz) || at != n || !key_ok(&r)) return 0;
     *m = r;
     return 1;
 }

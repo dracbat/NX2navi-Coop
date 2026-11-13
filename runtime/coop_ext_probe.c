@@ -160,8 +160,8 @@ static int fields_ok(int kind, const uint8_t *b, size_t n, const Toks *k) {
     }
     case COOP_K_KEY: {
         CoopKeyMsg m;
-        return coop_key_parse(b, n, &m) && k->n == 7 && m.sess == num(k, 3) && m.seq == num(k, 4) && m.hash == num(k, 5) &&
-               m.delta == strtol(tok(k, 6), NULL, 10);
+        return coop_key_parse(b, n, &m) && k->n == 11 && m.sess == num(k, 3) && m.seq == num(k, 4) && m.hash == num(k, 5) &&
+               m.delta == strtol(tok(k, 6), NULL, 10) && m.flags == num(k, 7) && same_xyz(k, 8, m.xyz);
     }
     }
     return 0;
@@ -389,6 +389,18 @@ static void probe_packers(void) {
     CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of seq 0 packs");
     kf = ke, kf.hash = 0;
     CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of hash 0 packs");
+    kf = ke, kf.flags = COOP_KEY_PLACE, kf.xyz[0] = -10.25f, kf.xyz[1] = 100.0f, kf.xyz[2] = -21.5f;
+    CHECK(coop_key_pack(&kf, out, sizeof out) == COOP_KEY_MSG, "a KEY with a place packs");
+    CoopKeyMsg kg = kf;
+    kg.flags = 2;
+    CHECK(!coop_key_pack(&kg, out, sizeof out), "a KEY of an unknown flag packs");
+    kg = kf, kg.xyz[1] = NAN;
+    CHECK(!coop_key_pack(&kg, out, sizeof out), "a KEY of a place that is not a number packs");
+    kg = kf, kg.xyz[2] = 2e6f;
+    CHECK(!coop_key_pack(&kg, out, sizeof out), "a KEY of a place too far packs");
+    kg = kf, kg.flags = 0;
+    CHECK(!coop_key_pack(&kg, out, sizeof out), "a KEY without its place flag but with a place packs");
+    CHECK(!coop_key_pack(&kf, out, COOP_KEY_MSG - 1), "a KEY packs into too little room");
 }
 
 // ---- random
@@ -488,7 +500,8 @@ static size_t rnd_message(int kind, uint8_t *out, size_t cap) {
     }
     case COOP_K_KEY: {
         int d = (int)rnd_below(2 * COOP_KEYS_MAX) - COOP_KEYS_MAX;   // -15..14, then 0 is 15
-        CoopKeyMsg m = {rnd() | 1, rnd() | 2, rnd() | 4, (int8_t)(d ? d : COOP_KEYS_MAX)};
+        CoopKeyMsg m = {rnd() | 1, rnd() | 2, rnd() | 4, (int8_t)(d ? d : COOP_KEYS_MAX), (uint8_t)rnd_below(2), {0, 0, 0}};
+        for (int i = 0; m.flags && i < 3; i++) m.xyz[i] = rnd_f(1e6f);
         return coop_key_pack(&m, out, cap);
     }
     }
