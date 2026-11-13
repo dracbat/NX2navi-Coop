@@ -6,7 +6,8 @@
 #include "coop_ext_wire.h"   // KILL and DAMAGE: CoopKillMsg and its codec
 #include "cpu.h"
 
-// coop_puppet_init, after coop_init: the KILL and DAMAGE handlers, the roster and tick hooks on the co-op thread.
+// coop_puppet_init, before coop_init: the KILL and DAMAGE handlers and the view and tick hooks on the co-op thread
+// (coop_ext.h).
 void coop_kill_init(void);
 // coop_puppet_present (present thread, every present): settings, the players present and the difficulty factors, the
 // life hook's switch (the patch set coop_life), expiry of what other players sent. 1 when the frame hook should run

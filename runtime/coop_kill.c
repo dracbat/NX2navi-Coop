@@ -10,8 +10,10 @@
 // w9 = hit' + rest and changes nothing else. The hit is w9 plus term 2 (comp+0x228: the sword's hits and the bites on
 // Link land there); rest is what is left of w10, a pending life request's part or the kill override:
 //   difficulty    hit' is the hit divided by the health factor for an Enemy_* actor and multiplied by the damage factor
-//                 for Link, with a fractional carry per component (16.16), for N players: the room's members in the
-//                 game world (their POS) and this player, a member gone counting for 10 s more;
+//                 for Link, with a fractional carry per component (16.16), for N players: this player and the other
+//                 players of the room whose Link is in the game world (their last pose names an area and is fresh:
+//                 coop_ext.h; a game on the title screen, loading a save or changing area sends none), a player gone
+//                 counting for 10 s more;
 //   shared damage plus the hits the other players dealt to the same placed enemy (DAMAGE), scaled the same way, so
 //                 the players fight the same enemy together;
 //   shared kills  plus lethal damage when another player killed it (KILL): this world runs its own death, with its
@@ -31,9 +33,16 @@
 //
 // Threads. The host runs on whichever thread updates the actor (several): it reads actor memory, takes K.lock only
 // when there is something to do for that component, and never calls guest code. Its common case (no hit, nothing
-// pending) is two loads and a compare. Messages go out from the co-op thread (coop_on_tick), each event three times
-// (0, 150, 450 ms); receivers keep a window per sender and apply only in the area they are in, to an enemy that updates
-// within 60 s (the area's change clears everything).
+// pending) is two loads and a compare. Messages go out from the co-op thread (coop_ext.h, its tick), each event once
+// and reliably, in the order the events happened; one the room's queue cannot take yet waits for the next tick, for
+// 10 s at most. The players of the room (coop.c lets only those on the host's list speak) are trusted as they are.
+// A receiver keeps a window per sender's seat (another player in the seat starts it again), takes 100 events a second
+// from each at most, and keeps what it takes for the enemy's next update in the area it is in, within 60 s of the
+// message (the area's change clears everything). Each sender has a share of that table (NE_SEAT of NE), and an entry
+// is the enemy's placement hash with its name's hash, so that a sender who names enemies that never update here, or a
+// real one under another name, keeps neither the others' kills nor their hits out. What another player killed or hit
+// waits until this game's save was copied for the room (coop_game_backed_up). Lines about what a player sent go
+// through coop_ext_log, a few a second per sender.
 //
 // Settings (environment or nx2navi.ini, no menu row; read again when cfg_version changes; all logged at start):
 //   NX2NAVI_COOP_KILLS=0          no shared kills          NX2NAVI_COOP_DAMAGE=0        no shared damage
@@ -61,8 +70,9 @@
 
 #include "cfg.h"
 #include "coop.h"
+#include "coop_ext.h"
+#include "coop_game.h"
 #include "coop_kill.h"
-#include "coop_offer.h"
 #include "coop_puppet.h"
 #include "host.h"
 #include "platform/platform.h"
@@ -73,29 +83,31 @@
 
 // The bytes of KILL and DAMAGE: coop_ext_wire.c (coop_kill_pack, coop_kill_parse, coop_kill_name_hash).
 
-// A receiver's window per sender: an event (its eseq) is taken once, its repeats and anything 64 events older are not;
-// a new epoch (the sender started again) starts the window again.
+// A receiver's window per sender's seat: an event (its eseq) is taken once, its repeats and anything 64 events older
+// are not; another player in the seat (its gen) or a new epoch (the sender started again) starts the window again.
+// Event numbers are compared as serial numbers, so that one of 0xffffffff is followed by 0.
 typedef struct {
-    uint32_t epoch, top;
+    uint32_t gen, epoch, top;
     uint64_t bits;
     uint64_t rate_at;
-    int rate_n;
+    int rate_n, any;
 } Window;
 
-static int window_take(Window *w, uint32_t epoch, uint32_t seq) {   // 1: not seen before
-    if (w->epoch != epoch) {
-        w->epoch = epoch, w->top = seq, w->bits = 1;
+static int window_take(Window *w, uint32_t gen, uint32_t epoch, uint32_t seq) {   // 1: not seen before
+    if (!w->any || w->gen != gen || w->epoch != epoch) {
+        if (!w->any || w->gen != gen) w->rate_at = 0, w->rate_n = 0;
+        w->any = 1, w->gen = gen, w->epoch = epoch, w->top = seq, w->bits = 1;
         return 1;
     }
-    if (seq > w->top) {
-        uint32_t d = seq - w->top;
-        w->bits = d >= 64 ? 1 : w->bits << d | 1;
+    int32_t ahead = (int32_t)(seq - w->top);
+    if (ahead > 0) {
+        w->bits = ahead >= 64 ? 1 : w->bits << ahead | 1;
         w->top = seq;
         return 1;
     }
-    uint32_t d = w->top - seq;
-    if (d >= 64 || (w->bits >> d & 1)) return 0;
-    w->bits |= 1ull << d;
+    uint32_t back = w->top - seq;
+    if (back >= 64 || (w->bits >> back & 1)) return 0;
+    w->bits |= 1ull << back;
     return 1;
 }
 
@@ -148,17 +160,20 @@ static const char *const deny_part[] = {"_Dictionary", "_Attention", "_Haribote"
 static const char *const deny_area[] = {"DreamWorld", "EnemyMuseum", "BossRush"};
 
 #define NE 64      // the other players' kills and hits waiting for their enemy here
+#define NE_SEAT 16 // ... of which one sender's messages may make this many
 #define NC 128     // fractional carries, one per life component
 #define NP 16      // local deaths waiting for the next update's confirmation
 #define NO 64      // events going out
 #define NT 8       // test items
+#define OUT_KEEP_MS 10000   // an event the room's queue did not take within this is dropped
 
 typedef struct {
     _Atomic uint64_t inst;   // 0: free. Written under K.lock; the host's quick probe reads it without
     uint32_t hash;           // the sender's name hash (0: a test, any name)
-    uint8_t from, doom, boss, said;
+    uint8_t owner;           // the seat whose message made it (0: a test); its share of the table
+    uint8_t from, doom, boss, said;   // from: the seat of the last message
     int32_t pending;         // raw hit points not applied yet
-    uint64_t t_ms, doom_ms, applied_comp, applied_ms;
+    uint64_t t_ms, doom_ms, applied_comp, applied_ms;   // t_ms: when it was made (it expires 60 s later)
     int tries;
 } Entry;
 
@@ -176,7 +191,7 @@ typedef struct {
 } Pend;
 
 typedef struct {
-    uint8_t used, kind, copies, len;
+    uint8_t used, kind, len;
     uint32_t eseq;
     uint64_t t0, inst;
     uint8_t buf[COOP_KILL_MSG_MAX];
@@ -189,7 +204,7 @@ typedef struct {
     float radius;
     uint64_t at_ms, every_ms, inst, target, target_ms;
     uint64_t fixed;          // kill/hit: '#<inst>' that enemy only, wherever it is
-    int after_mate;          // '~<s>' instead of '@<s>': seconds after another member was first seen in this area
+    int after_mate;          // '~<s>' instead of '@<s>': seconds after another player was first seen in this area
     uint32_t area_gen;
 } Test;
 
@@ -205,11 +220,13 @@ static struct {
     // published
     _Atomic int on, work, ne_live, np_live;
     _Atomic uint32_t mul_enemy, mul_link;   // 16.16: 65536 / health factor, 65536 * damage factor
-    _Atomic int others, self;
-    _Atomic uint32_t present_ids;           // the other members the roster does not call away
+    _Atomic int others, self;               // the other players in the room; this game's seat (0 outside a room)
     _Atomic uint64_t link_comp, area_t0;
-    _Atomic uint64_t mate_t0;                // when another member was first seen in this area (POS), 0: none now
+    _Atomic uint64_t mate_t0;                // when another player was first seen in this area (their pose), 0: none now
     int link_said;
+    // the co-op thread's: each seat's player (its gen, 0 none) and name, from the glue's view
+    uint32_t seat_gen[COOP_PLAYERS + 1];
+    char seat_name[COOP_PLAYERS + 1][COOP_NAME_CAP];
     // the present thread's
     int players;                            // N in effect
     uint64_t lower_at, count_at, stats_at;
@@ -228,7 +245,7 @@ static struct {
     int np;
     Out out[NO];
     uint32_t epoch, eseq;
-    Window win[COOP_MAX_MEMBERS + 1];
+    Window win[COOP_PLAYERS + 1];
     uint32_t hits, link_hits, kills_sent, dmg_sent, kills_got, dmg_got, applied, died, dropped_out;
     uint32_t stats_seen;
     uint64_t log_at;
@@ -360,9 +377,9 @@ static void flush(Lines *L, int n, int cut) {
 
 // ---- the tables (under K.lock)
 
-static Entry *entry_find(uint64_t inst) {
+static Entry *entry_find(uint64_t inst, uint32_t hash) {
     for (int i = 0; i < NE; i++)
-        if (atomic_load_explicit(&K.e[i].inst, memory_order_relaxed) == inst) return &K.e[i];
+        if (atomic_load_explicit(&K.e[i].inst, memory_order_relaxed) == inst && K.e[i].hash == hash) return &K.e[i];
     return NULL;
 }
 
@@ -373,19 +390,28 @@ static int entry_probe(uint64_t inst) {   // without the lock
     return 0;
 }
 
-static Entry *entry_add(uint64_t inst, uint32_t hash, uint64_t now) {
-    Entry *e = entry_find(inst);
+// The entry of an enemy (its placement hash and name hash) for owner's message (0: a test's), made when there is none;
+// NULL with *why when owner's share or the table is full.
+static Entry *entry_add(uint64_t inst, uint32_t hash, uint8_t owner, uint64_t now, const char **why) {
+    Entry *e = entry_find(inst, hash);
     if (e) return e;
+    int mine = 0;
+    for (int i = 0; owner && i < NE; i++) mine += atomic_load_explicit(&K.e[i].inst, memory_order_relaxed) && K.e[i].owner == owner;
+    if (mine >= NE_SEAT) {
+        *why = "this player's share of the table is full (16 enemies wait for their next update here)";
+        return NULL;
+    }
     for (int i = 0; i < NE; i++) {
         e = &K.e[i];
         if (atomic_load_explicit(&e->inst, memory_order_relaxed)) continue;
-        e->hash = hash, e->from = 0, e->doom = 0, e->boss = 0, e->said = 0, e->pending = 0;
+        e->hash = hash, e->owner = owner, e->from = owner, e->doom = 0, e->boss = 0, e->said = 0, e->pending = 0;
         e->t_ms = now, e->doom_ms = 0, e->applied_comp = 0, e->applied_ms = 0, e->tries = 0;
         atomic_store(&e->inst, inst);
         K.ne++;
         work_update();
         return e;
     }
+    *why = "the table is full";
     return NULL;
 }
 
@@ -417,7 +443,7 @@ static void clear_tables(void) {   // under K.lock: everything of the last area 
     work_update();
 }
 
-// A message to the room: packed now (the area it happened in), sent from the co-op thread three times.
+// A message to the room: packed now (the area it happened in), sent from the co-op thread once.
 static void queue_msg(uint8_t kind, uint64_t inst, uint32_t hash, int32_t raw, uint8_t flags, uint64_t now, Lines *L) {
     CoopKillMsg m = {.epoch = K.epoch, .eseq = ++K.eseq, .inst = inst, .name_hash = hash, .flags = flags};
     snprintf(m.area, sizeof m.area, "%s", K.area);
@@ -435,7 +461,7 @@ static void queue_msg(uint8_t kind, uint64_t inst, uint32_t hash, int32_t raw, u
         o->used = 0;
         return;
     }
-    o->used = 1, o->kind = kind, o->copies = 0, o->eseq = m.eseq, o->t0 = now, o->inst = inst;
+    o->used = 1, o->kind = kind, o->eseq = m.eseq, o->t0 = now, o->inst = inst;
     if (kind == COOP_K_KILL) K.kills_sent++;
     else K.dmg_sent++;
     if (K.loop) {   // test: the bytes parsed back as a receiver would
@@ -553,9 +579,10 @@ static void run_tests(const Ident *id, int link, int32_t life, uint64_t now, uin
 static void apply_entry(Entry *e, uint64_t comp, const Ident *id, int32_t life, int32_t max, uint64_t now, int32_t *raw,
                         int *lethal, int *remote_kill, Lines *L) {
     char w[16];
+    if (e->owner && !coop_game_backed_up()) return;   // the save is not copied for this room yet: it waits
     if (e->hash && e->hash != id->hash) {
-        say(L, "coop: kill: inst %llu here is %s (name hash %08x), not member %d's (%08x): dropped", (unsigned long long)e->inst,
-            id->name, id->hash, e->from, e->hash);
+        say(L, "coop: kill: inst %llu here is %s (name hash %08x), not the %08x seat %d named: dropped", (unsigned long long)e->inst,
+            id->name, id->hash, e->hash, e->from);
         entry_free(e);
         return;
     }
@@ -568,7 +595,7 @@ static void apply_entry(Entry *e, uint64_t comp, const Ident *id, int32_t life, 
     if (e->pending > 0) {
         *raw += e->pending;
         K.applied++;
-        say(L, "coop: damage: %s member %d's hits on %s inst %llu: %d (raw) applied here, life %d/%d before", wall(w),
+        say(L, "coop: damage: %s seat %d's hits on %s inst %llu: %d (raw) applied here, life %d/%d before", wall(w),
             e->from, id->name, (unsigned long long)id->inst, e->pending, life, max);
         e->pending = 0;
     }
@@ -578,7 +605,7 @@ static void apply_entry(Entry *e, uint64_t comp, const Ident *id, int32_t life, 
         } else if (e->applied_comp == comp) {
             if (life <= 0) {
                 K.died++;
-                say(L, "coop: kill: %s %s inst %llu died here %llu ms after member %d's kill arrived", wall(w), id->name,
+                say(L, "coop: kill: %s %s inst %llu died here %llu ms after seat %d's kill arrived", wall(w), id->name,
                     (unsigned long long)id->inst, (unsigned long long)(now - e->doom_ms), e->from);
                 entry_free(e);
                 return;
@@ -599,10 +626,10 @@ static void apply_entry(Entry *e, uint64_t comp, const Ident *id, int32_t life, 
         } else if (life > 0) {
             *lethal = *remote_kill = 1;
             e->applied_comp = comp, e->applied_ms = now, e->tries = 1;
-            say(L, "coop: kill: %s lethal damage to %s inst %llu, life %d/%d (member %d killed it %llu ms ago)", wall(w),
+            say(L, "coop: kill: %s lethal damage to %s inst %llu, life %d/%d (seat %d killed it %llu ms ago)", wall(w),
                 id->name, (unsigned long long)id->inst, life, max, e->from, (unsigned long long)(now - e->doom_ms));
         } else {
-            say(L, "coop: kill: %s inst %llu is already dead here (member %d's kill)", id->name, (unsigned long long)id->inst,
+            say(L, "coop: kill: %s inst %llu is already dead here (seat %d's kill)", id->name, (unsigned long long)id->inst,
                 e->from);
             entry_free(e);
             return;
@@ -660,8 +687,9 @@ static int32_t life_slow(uint64_t comp, int32_t h, int32_t r) {
                 dist_link(id.pos), life, max, plat_thread_id());
         }
     }
-    Entry *e = has_entry ? entry_find(inst) : NULL;
-    if (e) apply_entry(e, comp, &id, life, max, now, &remote_raw, &lethal, &remote_kill, &L);
+    for (int i = 0; has_entry && i < NE; i++)   // each name the others gave this placement hash (one is right, if any)
+        if (atomic_load_explicit(&K.e[i].inst, memory_order_relaxed) == inst)
+            apply_entry(&K.e[i], comp, &id, life, max, now, &remote_raw, &lethal, &remote_kill, &L);
     int32_t own = local + test_raw, raw = own + remote_raw, out = raw;
     uint32_t mul = link ? atomic_load(&K.mul_link) : id.enemy ? atomic_load(&K.mul_enemy) : 65536;
     if (raw > 0 && mul != 65536) out = scale(comp, actor, raw, mul, now, &carry);
@@ -738,24 +766,22 @@ static void life_host(Cpu *c) {
 
 // ---- the co-op thread: what the others sent, and the sends
 
+static const char *seat_name(int s) { return K.seat_name[s][0] ? K.seat_name[s] : "(name not known yet)"; }
 
 static void on_msg(int from, const uint8_t *bytes, size_t n, void *user) {
     uint8_t kind = (uint8_t)(uintptr_t)user;
     const char *what = kind == COOP_K_KILL ? "KILL" : "DAMAGE";
+    if (from < 1 || from > COOP_PLAYERS || from == atomic_load(&K.self)) return;
     CoopKillMsg m;
     if (!coop_kill_parse(kind, bytes, n, &m)) {
-        static uint64_t said;
-        uint64_t now = plat_now_ms();
-        if (now - said >= 5000) said = now, rt_log("coop: kill: a %s message of member %d does not parse (%zu bytes)", what, from, n);
+        coop_ext_log(from, "kill: a %s of %zu bytes from seat %d '%s' does not parse; dropped", what, n, from, seat_name(from));
         return;
     }
-    if (from < 1 || from > COOP_MAX_MEMBERS || from == atomic_load(&K.self)) return;
     uint64_t now = plat_now_ms();
-    int trusted = coop_game_shown() >> from & 1;
-    char line[320], w[16];
+    char w[16];
     plat_mutex_lock(&K.lock);
     Window *wn = &K.win[from];
-    if (!window_take(wn, m.epoch, m.eseq)) {   // the second or third copy
+    if (!window_take(wn, K.seat_gen[from], m.epoch, m.eseq)) {   // sent again, or older than the window
         plat_mutex_unlock(&K.lock);
         return;
     }
@@ -763,76 +789,91 @@ static void on_msg(int from, const uint8_t *bytes, size_t n, void *user) {
     if (++wn->rate_n > 100) {
         int first = wn->rate_n == 101;
         plat_mutex_unlock(&K.lock);
-        if (first) rt_log("coop: kill: member %d sends more than 100 events a second: the rest of this second is dropped", from);
+        if (first)
+            coop_ext_log(from, "kill: seat %d '%s' sends more than 100 events a second: the rest of this second is dropped", from,
+                         seat_name(from));
         return;
     }
     if (kind == COOP_K_KILL) K.kills_got++;
     else K.dmg_got++;
-    const char *why = !trusted ? "the member is not accepted or not identified"
-                    : !atomic_load(&K.on) ? "the life hook is off here"
+    const char *why = !atomic_load(&K.on) ? "the life hook is off here"
                     : kind == COOP_K_KILL && !K.kills ? "kills are off here (NX2NAVI_COOP_KILLS=0)"
                     : kind == COOP_K_DAMAGE && !K.damage ? "damage is off here (NX2NAVI_COOP_DAMAGE=0)"
                     : strcmp(m.area, K.area) ? "another area"
                     : area_denied(K.area) ? "an area the room does not share"
                     : (m.flags & COOP_KILL_BOSS) && K.boss_mode == BOSS_OFF ? "bosses are off here" : NULL;
     Entry *e = NULL;
-    if (!why && !(e = entry_add(m.inst, m.name_hash, now))) why = "the table is full";
+    if (!why) e = entry_add(m.inst, m.name_hash, (uint8_t)from, now, &why);
     if (e) {
-        e->from = (uint8_t)from, e->t_ms = now, e->boss = m.flags & COOP_KILL_BOSS;
+        e->from = (uint8_t)from, e->boss = m.flags & COOP_KILL_BOSS;
         if (kind == COOP_K_KILL) {
             if (!e->doom) e->doom_ms = now;
             e->doom = 1;
-        } else {
+        } else if (e->pending < 1000000) {
             e->pending += m.raw;
         }
     }
-    if (kind == COOP_K_KILL)
-        snprintf(line, sizeof line, "coop: kill: %s member %d killed inst %llu (name hash %08x) in %s: %s%s", wall(w), from,
-                 (unsigned long long)m.inst, m.name_hash, m.area, why ? "dropped: " : "it dies here at its next update",
-                 why ? why : "");
-    else
-        snprintf(line, sizeof line, "coop: damage: %s member %d hit inst %llu (name hash %08x) in %s for %u (raw)%s: %s%s",
-                 wall(w), from, (unsigned long long)m.inst, m.name_hash, m.area, m.raw, m.flags & COOP_KILL_BOSS ? ", a boss" : "",
-                 why ? "dropped: " : "applied at its next update here", why ? why : "");
+    int wait = e && !coop_game_backed_up();
     plat_mutex_unlock(&K.lock);
-    rt_log("%s", line);
+    if (kind == COOP_K_KILL)
+        coop_ext_log(from, "kill: %s seat %d '%s' killed inst %llu (name hash %08x) in %s: %s%s%s", wall(w), from, seat_name(from),
+                     (unsigned long long)m.inst, m.name_hash, m.area, why ? "dropped: " : "it dies here at its next update",
+                     why ? why : "", wait ? " (once this game's save is copied for the room)" : "");
+    else
+        coop_ext_log(from, "damage: %s seat %d '%s' hit inst %llu (name hash %08x) in %s for %u (raw)%s: %s%s%s", wall(w), from,
+                     seat_name(from), (unsigned long long)m.inst, m.name_hash, m.area, m.raw, m.flags & COOP_KILL_BOSS ? ", a boss" : "",
+                     why ? "dropped: " : "applied at its next update here", why ? why : "",
+                     wait ? " (once this game's save is copied for the room)" : "");
 }
 
-static void on_view(const CoopView *v, void *user) {
+static void on_view(const CoopExtView *v, void *user) {
     (void)user;
-    int others = v->state == COOP_JOINED && v->n > 1 ? v->n - 1 : 0;
-    uint32_t ids = 0;
-    for (int i = 0; i < v->n; i++)
-        if (v->member[i].id != v->self && !v->member[i].away && v->member[i].id >= 1 && v->member[i].id <= COOP_MAX_MEMBERS)
-            ids |= 1u << v->member[i].id;
-    atomic_store(&K.self, v->self);
-    atomic_store(&K.present_ids, ids);
+    int others = 0;
+    for (int s = 1; s <= COOP_PLAYERS; s++) {
+        const CoopSeat *t = &v->seat[s];
+        int here = v->in_room && t->id;
+        K.seat_gen[s] = here ? t->gen : 0;
+        snprintf(K.seat_name[s], sizeof K.seat_name[s], "%s", here ? t->name : "");
+        others += here && !t->self;
+    }
+    atomic_store(&K.self, v->in_room ? v->self : 0);
     atomic_store(&K.others, others);
 }
 
-static const uint32_t repeat_ms[3] = {0, 150, 450};
-
+// The events waiting to go out, each once, in the order they happened; what the room's queue does not take now waits
+// for the next step, OUT_KEEP_MS at most.
 static void on_tick(uint64_t now, void *user) {
     (void)user;
-    static struct { uint8_t kind, len; uint8_t buf[COOP_KILL_MSG_MAX]; } go[NO];
-    int ng = 0;
+    static struct { int slot; uint32_t eseq; uint8_t kind, len; uint8_t buf[COOP_KILL_MSG_MAX]; } go[NO];
+    int ng = 0, expired = 0;
     plat_mutex_lock(&K.lock);
     for (int i = 0; i < NO; i++) {
         Out *o = &K.out[i];
-        if (!o->used || now < o->t0 + repeat_ms[o->copies]) continue;
-        go[ng].kind = o->kind, go[ng].len = o->len;
-        memcpy(go[ng].buf, o->buf, o->len);
-        ng++;
-        if (++o->copies >= 3) o->used = 0;
+        if (!o->used) continue;
+        if (now > o->t0 && now - o->t0 > OUT_KEEP_MS) {   // t0 is a life host's clock, a moment after this step's now
+            o->used = 0, K.dropped_out++, expired++;
+            continue;
+        }
+        int j = ng++;   // in event order: eseq as a serial number
+        while (j > 0 && (int32_t)(o->eseq - go[j - 1].eseq) < 0) go[j] = go[j - 1], j--;
+        go[j].slot = i, go[j].eseq = o->eseq, go[j].kind = o->kind, go[j].len = o->len;
+        memcpy(go[j].buf, o->buf, o->len);
     }
     plat_mutex_unlock(&K.lock);
+    int sent = 0;
+    while (sent < ng && coop_ext_send(0, go[sent].kind, go[sent].buf, go[sent].len, 1)) sent++;
+    if (sent) {
+        plat_mutex_lock(&K.lock);
+        for (int i = 0; i < sent; i++)
+            if (K.out[go[i].slot].used && K.out[go[i].slot].eseq == go[i].eseq) K.out[go[i].slot].used = 0;
+        plat_mutex_unlock(&K.lock);
+    }
     static uint64_t said;
-    for (int i = 0; i < ng; i++)
-        if (!coop_send(go[i].kind, go[i].buf, go[i].len) && now - said >= 10000) {
-            said = now;
-            rt_log("coop: kill: a %s message could not be sent (not in a room, or the outbox is full)",
-                   go[i].kind == COOP_K_KILL ? "KILL" : "DAMAGE");
-        }
+    if ((expired || sent < ng) && now - said >= 10000) {
+        said = now;
+        rt_log("coop: kill: %d events wait for the room's queue%s", ng - sent,
+               expired ? "; some waited too long and were dropped (not in a room, or the queue stayed full)" : "");
+    }
 }
 
 // ---- the present thread
@@ -967,7 +1008,7 @@ static void settings(void) {
         else if (x->fixed) snprintf(what, sizeof what, "inst %llu", (unsigned long long)x->fixed);
         else snprintf(what, sizeof what, "within %.1f m of Link", x->radius);
         rt_log("coop: test: %s %s at %.1f s after %s, %d time%s every %.1f s, raw %d", test_names[x->kind], what,
-               x->at_ms / 1000.0, x->after_mate ? "another member was first seen in the area" : "each area began", x->count,
+               x->at_ms / 1000.0, x->after_mate ? "another player was first seen in the area" : "each area began", x->count,
                x->count == 1 ? "" : "s", x->every_ms / 1000.0, x->raw);
     }
 }
@@ -978,8 +1019,8 @@ static double factor(const double *f, int n) {
     return f[3] + (n - 4) * (f[3] - f[2]);
 }
 
-// N: this player and the other members in the game world (their POS: trusted, heard within 3 s, IN_WORLD); without
-// POS (puppets off) the members the roster lists, accepted and not away. Up at once, down after 10 s.
+// N: this player and the other players of the room whose Link is in the game world (coop_ext.h: their last pose names
+// an area and is fresh; the room sends every player's pose, with puppets on or off). Up at once, down after 10 s.
 static void players(uint64_t now) {
     int others = atomic_load(&K.others), n;
     const char *how;
@@ -988,15 +1029,9 @@ static void players(uint64_t now) {
     } else if (!others) {
         n = 1, how = "no one else in a room";
     } else {
-        int w = coop_puppet_world_others();
-        if (w >= 0) {
-            n = 1 + w, how = "this player and the members in the game world";
-        } else {
-            uint32_t ids = atomic_load(&K.present_ids) & coop_game_shown();
-            n = 1 + __builtin_popcount(ids), how = "the room's accepted members (no POS heard)";
-        }
+        n = 1 + coop_puppet_world_others(), how = "this player and the other players in the game world (their poses)";
+        if (n > COOP_PLAYERS) n = COOP_PLAYERS;
     }
-    if (n > COOP_MAX_MEMBERS) n = COOP_MAX_MEMBERS;
     char area[COOP_KILL_AREA_MAX + 1];
     plat_mutex_lock(&K.lock);
     snprintf(area, sizeof area, "%s", K.area);
@@ -1004,10 +1039,10 @@ static void players(uint64_t now) {
     int mates = others ? coop_puppet_area_others(area) : 0;
     if (mates && !atomic_load(&K.mate_t0)) {
         atomic_store(&K.mate_t0, now);
-        rt_log("coop: kill: %d other member%s in %s now (their POS)", mates, mates == 1 ? "" : "s", area);
+        rt_log("coop: kill: %d other player%s in %s now (their poses)", mates, mates == 1 ? "" : "s", area);
     } else if (!mates && atomic_load(&K.mate_t0)) {
         atomic_store(&K.mate_t0, 0);
-        rt_log("coop: kill: no other member in %s now", area);
+        rt_log("coop: kill: no other player in %s now", area);
     }
     int prev = K.players;
     if (n >= K.players) K.players = n, K.lower_at = 0;
@@ -1031,7 +1066,7 @@ static void housekeeping(uint64_t now) {
         Entry *e = &K.e[i];
         if (!atomic_load_explicit(&e->inst, memory_order_relaxed) || now - e->t_ms < 60000) continue;
         if (!e->applied_comp)
-            say(&L, "coop: kill: inst %llu (%s from member %d) never updated here in 60 s: dropped", (unsigned long long)e->inst,
+            say(&L, "coop: kill: inst %llu (%s from seat %d) never updated here within 60 s: dropped", (unsigned long long)e->inst,
                 e->doom ? "a kill" : "hits", e->from);
         entry_free(e);
         expired++;
@@ -1049,7 +1084,8 @@ static void housekeeping(uint64_t now) {
         if (t->kind != T_DOOM && t->kind != T_DMG) continue;
         if (t->area_gen != K.area_gen) t->area_gen = K.area_gen, t->done = 0;
         if (!K.area[0] || t->done >= t->count || t_area < t->at_ms + (uint64_t)t->done * t->every_ms) continue;
-        Entry *e = entry_add(t->inst, 0, now);
+        const char *why = NULL;
+        Entry *e = entry_add(t->inst, 0, 0, now, &why);
         t->done++;
         if (!e) continue;
         e->from = 0;
@@ -1107,7 +1143,7 @@ int coop_kill_present(void) {
         work_update();
         plat_mutex_unlock(&K.lock);
         rt_patch_switch(K.set, want);
-        rt_log("coop: kill: the life hook %s (%d other member%s in the room, %d player%s counted, %d test%s; present "
+        rt_log("coop: kill: the life hook %s (%d other player%s in the room, %d player%s counted, %d test%s; present "
                "thread %u)", want ? "on" : "off", others, others == 1 ? "" : "s", K.players, K.players == 1 ? "" : "s",
                K.ntest, K.ntest == 1 ? "" : "s", plat_thread_id());
     }
@@ -1146,10 +1182,10 @@ void coop_kill_init(void) {
     K.epoch = e;
     atomic_store(&K.mul_enemy, 65536);
     atomic_store(&K.mul_link, 65536);
-    coop_on_message(COOP_K_KILL, on_msg, (void *)(uintptr_t)COOP_K_KILL);
-    coop_on_message(COOP_K_DAMAGE, on_msg, (void *)(uintptr_t)COOP_K_DAMAGE);
-    coop_on_view(on_view, NULL);
-    coop_on_tick(on_tick, NULL);
+    coop_ext_on_message(COOP_K_KILL, on_msg, (void *)(uintptr_t)COOP_K_KILL);
+    coop_ext_on_message(COOP_K_DAMAGE, on_msg, (void *)(uintptr_t)COOP_K_DAMAGE);
+    coop_ext_on_view(on_view, NULL);
+    coop_ext_on_tick(on_tick, NULL);
 }
 
 __attribute__((constructor)) static void kill_register(void) {
