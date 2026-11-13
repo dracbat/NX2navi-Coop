@@ -1115,6 +1115,11 @@ uint8_t *romfs_load(const char *rel, uint64_t *size_out) {
     return b;
 }
 
+// 1 when the game is served a file at rel (a path from the RomFS root): the image's own, or one a mod adds.
+int romfs_has(const char *rel) {
+    fs_init();
+    return rel && file_index(rel) != UINT64_MAX;
+}
 
 size_t romfs_overlay_count(void) { return noverlay; }
 
