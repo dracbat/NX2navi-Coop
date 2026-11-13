@@ -474,6 +474,16 @@ game folder is the default `<launcher>\game`. The dump is never touched.
 The release resolves the MSYS2 packages of the day into `toolchain.lock.json` (`--lock` reuses an older lock). The
 repository keeps old package files, so a release keeps building with the compiler it was tested with.
 
+**NX2navi Co-op** releases are built on a Windows runner by `.github/workflows/release-coop.yml`, under the names
+of `launcher/brand.py` (`NX2navi-Coop-Setup-<version>.exe`, `NX2navi-Coop-app-<version>.zip`,
+`NX2navi-Coop-runtime-<id>.zip`, `NX2navi-Coop-update.json`). A version has four numbers, the upstream release it
+is made from and a build number (`0.9.2.1`): a `-tag` would sort before its base and reach only the Preview
+channel. The parts it does not change (the shader translator, AMD's and NVIDIA's libraries, `nx2navi_dlssg.dll`,
+the button art, the pipeline list and the toolchain lock) come from that upstream release's app archive, checked
+against its manifest by `tools/coop_base_inputs.py`, which also seeds the generated runtime headers. Pushing the
+tag `v<VERSION>` builds the release and leaves it as a draft pre-release; publishing it as a pre-release reaches
+the Preview channel first, and as a release every launcher.
+
 ## Tests
 
 `python tests/launcher_test.py` (Python 3.14): versions, settings, the toolchain resolver and installer against a

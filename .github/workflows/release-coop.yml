@@ -1,0 +1,135 @@
+# An NX2navi Co-op release, built on a Windows runner with the release tool (tools/make_launcher.py): the four files
+# the launcher's updater reads (launcher/feed.py, names from launcher/brand.py): NX2navi-Coop-Setup-<version>.exe,
+# NX2navi-Coop-app-<version>.zip, NX2navi-Coop-runtime-<id>.zip and NX2navi-Coop-update.json. A release is left as a
+# draft pre-release to look at before it is published; launchers never see a draft.
+#
+# The binary parts NX2navi Co-op does not change come from the upstream release of the base version (VERSION without
+# its fourth number: 0.9.2.1 -> 0.9.2), checked against that release's own manifest (tools/coop_base_inputs.py): the
+# shader translator, AMD's and NVIDIA's libraries, nx2navi_dlssg.dll, the button art, the shared pipeline list and the
+# toolchain lock. Nothing of the game is involved: the content check runs first, and make_launcher.py runs it again
+# over the release folder.
+#
+# A pushed tag v<a>.<b>.<c>.<d> that equals v + VERSION builds its release. By hand (workflow_dispatch, which GitHub
+# offers for a workflow on the repository's default branch): a ref to build, and whether to draft a release from it or
+# only keep the files as the run's artifact.
+name: Release (NX2navi Co-op)
+
+on:
+  push:
+    tags: ['v*.*.*.*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'The tag or branch to build (a release needs the tag v + VERSION)'
+        required: true
+        default: 'coop'
+      release:
+        description: 'Draft a pre-release from it (otherwise the files are only the run artifact)'
+        type: boolean
+        default: false
+      prompt_art:
+        description: "Carry the upstream release's button art"
+        type: boolean
+        default: true
+      pipeline_list:
+        description: "Carry the upstream release's shared pipeline list"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # gh release create
+
+concurrency:
+  group: release-coop-${{ inputs.ref || github.ref_name }}
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: tangerineturtle1/NX2navi
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 1   # make_launcher.py names the commit in the build string
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Version and base
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -Raw).Trim()
+          if ($ver -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw "VERSION $ver: an NX2navi Co-op version has four numbers" }
+          $release = ('${{ github.event_name }}' -eq 'push') -or ('${{ inputs.release }}' -eq 'true')
+          $ref = '${{ inputs.ref || github.ref_name }}'
+          if ($release -and $ref -ne "v$ver") { throw "a release is built from the tag v$ver, not from $ref" }
+          $base = ($ver -split '\.')[0..2] -join '.'
+          "VER=$ver" >> $env:GITHUB_ENV
+          "BASE=$base" >> $env:GITHUB_ENV
+          "RELEASE=$release" >> $env:GITHUB_ENV
+          "NX2navi Co-op $ver from upstream $base; release: $release" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Content check
+        shell: pwsh
+        run: uv run --no-project --python 3.14 tools\check_content.py
+
+      - name: The upstream release's parts
+        shell: pwsh
+        run: |
+          $up = Join-Path $env:RUNNER_TEMP 'upstream'
+          gh release download "v$env:BASE" -R $env:UPSTREAM -p "NX2navi-app-$env:BASE.zip" -p NX2navi-update.json -D $up
+          if ($LASTEXITCODE) { throw "the upstream release v$env:BASE could not be downloaded" }
+          $leave = @()
+          if ('${{ inputs.prompt_art }}' -eq 'false') { $leave += '--no-prompt-art' }
+          if ('${{ inputs.pipeline_list }}' -eq 'false') { $leave += '--no-pipeline-list' }
+          uv run --no-project --python 3.14 tools\coop_base_inputs.py --zip "$up\NX2navi-app-$env:BASE.zip" `
+            --manifest "$up\NX2navi-update.json" --out "$env:RUNNER_TEMP\base" --seed-runtime runtime @leave `
+            > "$env:RUNNER_TEMP\inputs.json"
+          if ($LASTEXITCODE) { throw 'coop_base_inputs.py failed' }
+          Get-Content "$env:RUNNER_TEMP\inputs.json"
+
+      - name: Runtime shader headers
+        shell: pwsh
+        run: |
+          # The headers seeded from the upstream release are current unless NX2navi Co-op changed a shader: then its
+          # compilers come from the runner's MSYS2, where tools/build_shaders.py looks for them (BIN).
+          uv run --no-project --python 3.14 --with numpy tools\build_shaders.py --check
+          if ($LASTEXITCODE) {
+            C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-shaderc mingw-w64-ucrt-x86_64-spirv-tools'
+            if ($LASTEXITCODE) { throw 'the shader compilers could not be installed' }
+          }
+
+      - name: Build (tools/make_launcher.py)
+        shell: pwsh
+        run: |
+          $in = Get-Content "$env:RUNNER_TEMP\inputs.json" -Raw | ConvertFrom-Json
+          $build = @($in.make_launcher_args) + @('--feed', $env:GITHUB_REPOSITORY, '--out', "$env:RUNNER_TEMP\rel")
+          $notes = "docs\releases\coop-v$env:VER.md"
+          if (Test-Path $notes) { $build += @('--notes', $notes) }
+          uv run --no-project --python 3.14 --with numpy tools\make_launcher.py @build
+          if ($LASTEXITCODE) { throw 'make_launcher.py failed' }
+          Get-ChildItem "$env:RUNNER_TEMP\rel" -File | Format-Table Name, Length -AutoSize | Out-String | Write-Output
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nx2navi-coop-${{ env.VER }}
+          path: |
+            ${{ runner.temp }}/rel/NX2navi-Coop-*.exe
+            ${{ runner.temp }}/rel/NX2navi-Coop-*.zip
+            ${{ runner.temp }}/rel/NX2navi-Coop-update.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Draft pre-release v${{ env.VER }}
+        if: env.RELEASE == 'True'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "$env:RUNNER_TEMP\rel" -File -Filter 'NX2navi-Coop-*' | ForEach-Object FullName)
+          if ($files.Count -ne 4) { throw "expected the four release files, found $($files.Count)" }
+          $notes = "docs\releases\coop-v$env:VER.md"
+          $text = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--notes', "NX2navi Co-op $env:VER") }
+          gh release create "v$env:VER" @files --repo $env:GITHUB_REPOSITORY --title "NX2navi Co-op $env:VER" @text `
+            --draft --prerelease --verify-tag
+          if ($LASTEXITCODE) { throw 'gh release create failed' }

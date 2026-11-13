@@ -20,6 +20,9 @@ concurrency:
 
 jobs:
   appimage:
+    # upstream's releases only: NX2navi Co-op's releases are Windows only (release-coop.yml), and their app archive
+    # has another name than the one this job looks for
+    if: github.repository == 'tangerineturtle1/NX2navi'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
