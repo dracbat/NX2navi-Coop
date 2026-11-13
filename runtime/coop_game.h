@@ -18,3 +18,7 @@ int coop_game_running(void);
 // The era (coop_cutscene.c), any thread: a counter that moves whenever the title screen comes back (another
 // save may be played next, so the era is read anew).
 unsigned coop_game_save_serial(void);
+// NX2navi Co-op's modules, any thread: 1 once the save was copied for this room (coop_present starts the copy in a room
+// with a save played, whether progress is shared or not); a received kill, a followed scene, an era's teleport or a time
+// of day waits for it.
+int coop_game_backed_up(void);

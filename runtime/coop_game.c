@@ -190,6 +190,7 @@ static struct {
     uint32_t dropped[8];    // the first hashes of the values refused since the last log line (for the trace)
     int ndropped;
     uint64_t log_at;
+    uint32_t copy_epoch;    // X.room_epoch for which the save's copy was started
     // the pose
     float last_pos[3];
     uint64_t last_pos_at;
@@ -418,6 +419,7 @@ void coop_game_init(void) {
 void coop_game_hold(int on) { __atomic_store_n(&hold, on != 0, __ATOMIC_RELEASE); }
 int coop_game_running(void) { return __atomic_load_n(&running, __ATOMIC_ACQUIRE); }
 unsigned coop_game_save_serial(void) { return (unsigned)__atomic_load_n(&save_serial, __ATOMIC_ACQUIRE); }
+int coop_game_backed_up(void) { return __atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE); }
 
 void coop_game_rom_open(const char *path) {
     // the title screen's event flow is opened each time the title screen starts: at boot and after the pause menu's
@@ -426,9 +428,10 @@ void coop_game_rom_open(const char *path) {
 }
 
 // Before anything of a room reaches the save: a copy of it as it is, every slot. Slow (the whole save), so on a
-// thread of its own, started when this game begins to share in a room (a save is played then: the game has its save
-// storage open); values wait until the copy is there. arg: the room's count, so a copy that ends after the player
-// went on to another room does not open that one.
+// thread of its own, started when a save is played in a room, whether progress is shared or not (the game has its
+// save storage open then); the room's values, and NX2navi Co-op's kills, scenes and teleports (coop_game_backed_up),
+// wait until the copy is there. arg: the room's count, so a copy that ends after the player went on to another room
+// does not open that one.
 static void copy_save(void *arg) {
     uint32_t epoch = (uint32_t)(uintptr_t)arg;
     char path[PLAT_PATH_MAX];
@@ -743,6 +746,15 @@ void coop_present(Cpu *c) {
     }
     post_pose(pos, now);
     int in_room = __atomic_load_n(&X.room, __ATOMIC_ACQUIRE);
+    uint32_t epoch = __atomic_load_n(&X.room_epoch, __ATOMIC_ACQUIRE);
+    if (in_room && epoch != G.copy_epoch) {
+        // a save is played in a room: a copy of it before anything of the room reaches it, progress or NX2navi Co-op's
+        // kills, scenes and teleports (coop_game_backed_up), whether progress is shared or not
+        G.copy_epoch = epoch;
+        if (!__atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE) &&
+            !plat_thread_spawn(copy_save, (void *)(uintptr_t)epoch, "coop-save", 0))
+            rt_log("coop: the save could not be copied; nothing of the room's progress is taken");
+    }
     if (!in_room || !G.share) {
         if (G.sharing) {   // left the room, or sharing was turned off: what the next room hears starts from nothing
             G.sharing = 0, G.ntodo = 0;
@@ -755,13 +767,9 @@ void coop_present(Cpu *c) {
     if (!G.bound) bind(mgr);
     if (!G.bound) return;
     Cpu keep = *c;
-    uint32_t epoch = __atomic_load_n(&X.room_epoch, __ATOMIC_ACQUIRE);
     if (!G.sharing || epoch != G.room_epoch) {
         // this game starts to share: the others send what they have, and get what this save has
         G.sharing = 1, G.room_epoch = epoch;
-        if (!__atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE) &&
-            !plat_thread_spawn(copy_save, (void *)(uintptr_t)epoch, "coop-save", 0))
-            rt_log("coop: the save could not be copied; nothing of the room's progress is taken");
         for (int i = 0; i < G.nflags; i++) G.flags[i].sent = G.flags[i].want = 0, G.flags[i].pending = 0;
         G.ntodo = 0;
         G.asks_left = 2, G.ask_at = now;
