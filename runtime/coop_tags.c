@@ -23,13 +23,13 @@ static float num_or(const char *s, float def, float lo, float hi) {
 }
 
 static void parse(void) {
-    const char *on = cfg_get("NX2NAVI_COOP_TAGS");
+    const char *on = cfg_value("NX2NAVI_COOP_NAMES");
     const char *test = cfg_get("NX2NAVI_COOP_TAGS_TEST");
     const char *lg = cfg_get("NX2NAVI_COOP_TAGS_LOG");
     const char *head = cfg_get("NX2NAVI_COOP_TAGS_HEAD");
     const char *size = cfg_get("NX2NAVI_COOP_TAGS_SIZE");
     const char *cam = cfg_get("NX2NAVI_COOP_TAGS_CAM");
-    C.on = !(on && !strcmp(on, "0"));
+    C.on = cfg_bool("NX2NAVI_COOP_NAMES");
     C.test = !test || !*test || !strcmp(test, "0") ? 0 : !strcmp(test, "ruler") ? 2 : 1;
     C.log = lg && *lg && strcmp(lg, "0") != 0;
     C.cam = !(cam && !strcmp(cam, "0"));
@@ -43,8 +43,8 @@ static void parse(void) {
         if (k == 2 && a > 0.1f && a < 5.0f) C.head[1] = a;
     }
     C.size = num_or(size, 1.0f, 0.3f, 4.0f);
-    rt_log("coop: tags: %s (NX2NAVI_COOP_TAGS='%s'), test %s (NX2NAVI_COOP_TAGS_TEST='%s'), log %d, scene camera %s, "
-           "head %.2f m child / %.2f m adult, size %.2f", C.on ? "on" : "off", on ? on : "",
+    rt_log("coop: tags: %s (NX2NAVI_COOP_NAMES='%s'), test %s (NX2NAVI_COOP_TAGS_TEST='%s'), log %d, scene camera %s, "
+           "head %.2f m child / %.2f m adult, size %.2f", C.on ? "on" : "off", on,
            C.test == 2 ? "ruler" : C.test ? "Link and the shadow" : "none", test ? test : "", C.log,
            C.cam ? "read" : "never read (NX2NAVI_COOP_TAGS_CAM=0)", C.head[0], C.head[1], C.size);
 }

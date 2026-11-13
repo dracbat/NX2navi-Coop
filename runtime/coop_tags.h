@@ -4,8 +4,8 @@
 // frame's poses move the puppets); the present thread projects them with the camera that drew the presented frame
 // (vk_scenecam.h) and draws the names with Dear ImGui.
 //
-// Settings (environment or nx2navi.ini, no menu row; read again when cfg_version changes):
-//   NX2NAVI_COOP_TAGS       "0" off; on otherwise (default on)
+// Settings (read again when cfg_version changes): NX2NAVI_COOP_NAMES, the Co-op tab's "Show player names" (coop.c's
+// setting, on by default), switches the tags; the others are tests and tuning, from the environment or nx2navi.ini:
 //   NX2NAVI_COOP_TAGS_TEST  test: "1" also tags the local Link (its co-op name, else "Link") and the shadow puppet
 //                           (NX2NAVI_COOP_PUPPET_TEST=shadow, "Shadow"); "ruler" adds marks every 0.25 m from 0 to
 //                           2.5 m above their origins, for calibrating the head height
@@ -40,7 +40,7 @@ typedef struct {
 } CoopTagFrame;
 
 typedef struct {
-    int on;          // NX2NAVI_COOP_TAGS
+    int on;          // NX2NAVI_COOP_NAMES
     int test;        // 0, 1 (Link and the shadow too), 2 (ruler)
     int log;         // NX2NAVI_COOP_TAGS_LOG
     int cam;         // NX2NAVI_COOP_TAGS_CAM

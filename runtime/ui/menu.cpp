@@ -2067,7 +2067,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     if (g_perf_save.exchange(0)) cfg_save();
     perf_tick(plat_now_ns(), t);
     amiibo_tick();
-    const bool coop_draws = coop_overlay_tick();   // names of the other players, chat lines, an invite: over the game
+    const bool coop_draws = coop_overlay_tick();   // chat lines and an invite over the game
     const bool tags = coop_tags_tick(t);    // co-op name tags: the other players' names over their Links
     if (g_booting.load(std::memory_order_relaxed)) g_booting.store(0, std::memory_order_release);   // the game runs
     bool open = g_open.load(std::memory_order_relaxed);

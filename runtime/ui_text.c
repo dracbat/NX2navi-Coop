@@ -718,8 +718,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                 "profile folder. Small keys, rupees, ammunition and hearts stay your own. Off: only names and "
                                 "chat are shared.",
     [UI_MENU_COOP_NAMES] = "Show player names",
-    [UI_MENU_COOP_NAMES_DESC] = "Shows the name of each other player where their Link stands in your world, with the distance. "
-                                "Needs DLSS, FSR or TAA on (the game tells the menu where the camera looks only then).",
+    [UI_MENU_COOP_NAMES_DESC] = "Shows the name of each other player above their Link in your world, in their colour.",
     [UI_MENU_COOP_CHAT_SHOW] = "Show chat over the game",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "New chat lines and who joined or left show for a few seconds while the menu is closed.",
     [UI_MENU_COOP_N_CREATE_FAILED] = "Steam could not make the room. Try again in a moment.",
@@ -1375,8 +1374,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                 "профиля. Малые ключи, рупии, боеприпасы и сердца остаются вашими. Выкл.: общими остаются только "
                                 "имена и чат.",
     [UI_MENU_COOP_NAMES] = "Показывать имена игроков",
-    [UI_MENU_COOP_NAMES_DESC] = "Показывает имя каждого другого игрока там, где его Линк стоит в вашем мире, и расстояние до "
-                                "него. Нужны включённые DLSS, FSR или TAA (только тогда меню знает, куда смотрит камера).",
+    [UI_MENU_COOP_NAMES_DESC] = "Показывает имена других игроков над их Линками в вашем мире, цветом каждого игрока.",
     [UI_MENU_COOP_CHAT_SHOW] = "Показывать чат поверх игры",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "Новые строки чата и сообщения о входе и выходе игроков показываются несколько секунд, пока меню "
                                     "закрыто.",
@@ -2017,8 +2015,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                 "perfil. Chaves pequenas, rupias, munição e corações continuam seus. Desligado: só nomes e chat "
                                 "são compartilhados.",
     [UI_MENU_COOP_NAMES] = "Mostrar nomes dos jogadores",
-    [UI_MENU_COOP_NAMES_DESC] = "Mostra o nome de cada outro jogador onde o Link dele está no seu mundo, com a distância. Precisa "
-                                "de DLSS, FSR ou TAA ligado (só assim o menu sabe para onde a câmera olha).",
+    [UI_MENU_COOP_NAMES_DESC] = "Mostra o nome de cada outro jogador acima do Link dele no seu mundo, na cor desse jogador.",
     [UI_MENU_COOP_CHAT_SHOW] = "Mostrar o chat sobre o jogo",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "Novas linhas do chat e quem entrou ou saiu aparecem por alguns segundos com o menu fechado.",
     [UI_MENU_COOP_N_CREATE_FAILED] = "A Steam não conseguiu criar a sala. Tente de novo em instantes.",
@@ -2739,7 +2736,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_SHARE_DESC] = "在房间里，任何人取得的进展都算作所有人的：剧情、宝箱、门、道具和乐曲。在房间里的任何内容写入你的存档之前，存档会先复制到配置文件夹里的 "
                                 "coop-backup。小钥匙、卢比、弹药和心保持各自独立。关闭：只共享名字和聊天。",
     [UI_MENU_COOP_NAMES] = "显示玩家名字",
-    [UI_MENU_COOP_NAMES_DESC] = "在其他玩家的林克所处的位置显示其名字和距离。需要开启 DLSS、FSR 或 TAA（只有这样菜单才知道摄像机的朝向）。",
+    [UI_MENU_COOP_NAMES_DESC] = "在你的世界里，在其他玩家的林克上方以其颜色显示名字。",
     [UI_MENU_COOP_CHAT_SHOW] = "在游戏画面上显示聊天",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "菜单关闭时，新的聊天内容以及玩家加入或离开的提示会显示几秒钟。",
     [UI_MENU_COOP_N_CREATE_FAILED] = "Steam 无法创建房间。请稍后再试。",
