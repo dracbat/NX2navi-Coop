@@ -79,8 +79,8 @@ def streamline_sdk(base, out, dry):
             shutil.copy2(src / have, sdk / want)
         bad = streamline_pin.wrong_files(sdk)
         if bad:
-            sys.exit(f'the upstream release\'s DLSS Frame Generation files are not Streamline {streamline_pin.VERSION}\'s: '
-                     + ', '.join(bad))
+            sys.exit('the DLSS Frame Generation files of the upstream release are not those of Streamline '
+                     f'{streamline_pin.VERSION}: ' + ', '.join(bad))
     return sdk, []
 
 

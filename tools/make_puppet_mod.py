@@ -555,8 +555,10 @@ def main():
     try:
         files, rest_entries = puppet_files(Romfs(romfs), variants)
         write(out, files)
-    except (PuppetError, OSError, KeyError, ValueError, StopIteration) as e:
-        sys.exit(f'make_puppet_mod: {type(e).__name__}: {e}' if not isinstance(e, PuppetError) else f'make_puppet_mod: {e}')
+    except PuppetError as e:
+        sys.exit(f'make_puppet_mod: {e}')
+    except (OSError, KeyError, ValueError, StopIteration) as e:   # game files other than the ones this was made for
+        sys.exit(f'make_puppet_mod: {type(e).__name__}: {e}')
     for rel, blob in files.items():
         print(f'wrote {rel} ({len(blob)} bytes)')
     print('size entries: ' + ', '.join(f'{h:08x}={n}' for h, n in sorted(rest_entries.items())))

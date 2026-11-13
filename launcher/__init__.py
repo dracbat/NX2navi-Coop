@@ -6,4 +6,4 @@ compression.zstd, and truststore for Windows' own certificate check (launcher/ne
 everything that does work runs without it (launcher/cli.py).
 """
 
-from .brand import NAME  # noqa: E402,F401 - NX2navi Co-op's name (launcher/brand.py)
+from .brand import NAME  # noqa: F401 - NX2navi Co-op's name (launcher/brand.py)

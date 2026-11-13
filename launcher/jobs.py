@@ -49,8 +49,8 @@ STEPS = {
     'swap': ('Swap In the New Build', 'Linking the new build. It replaces the old one only once it is complete.'),
 }
 WEIGHTS = {'tools': 12, 'tools_update': 4, 'check': 1, 'exefs': 2, 'romfs': 14, 'lift': 14, 'compile': 55,
-           'compile_changed': 55, 'shaders': 18, 'coop': 1, 'prompts': 4, 'scan': 5, 'ready': 0, 'download': 8, 'verify': 1,
-           'swap': 6}
+           'compile_changed': 55, 'shaders': 18, 'coop': 1, 'prompts': 4, 'scan': 5, 'ready': 0, 'download': 8,
+           'verify': 1, 'swap': 6}
 
 
 # The game files tools/romfs_check.py reports as damaged on every copy of the game looked at so far: they are that
@@ -385,8 +385,8 @@ class InstallJob(Job):
 
     def run(self):
         self.ensure_tools('tools')
-        self.make_game(self.args(),
-                       {s: s for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'coop', 'prompts', 'scan')})
+        self.make_game(self.args(), {s: s for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'coop',
+                                                    'prompts', 'scan')})
         for sid in ('shaders', 'coop', 'prompts', 'scan'):
             if self.step(sid) and self.step(sid).state == PENDING:
                 self.skip(sid)

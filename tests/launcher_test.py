@@ -3624,7 +3624,8 @@ class JobTest(Tmp):
         j.run_inline()
         self.assertEqual(j.result, 'ok', j.error)
         self.assertEqual((j.step('coop').state, j.step('coop').value), (jobs.SKIPPED, 'Not Made'))
-        self.assertEqual([s.id for s in jobs.RebuildJob(ctx, self.tmp / 'game').steps][-3:], ['shaders', 'coop', 'scan'])
+        self.assertEqual([s.id for s in jobs.RebuildJob(ctx, self.tmp / 'game').steps][-3:],
+                         ['shaders', 'coop', 'scan'])
 
     def test_install_job_with_button_art(self):
         """A version with button art shows the prompts step as a row of its own, after the shaders."""
@@ -4645,7 +4646,7 @@ class SteamTest(Tmp):
         items = steam.vdf_load(new)[0][2]
         self.assertEqual([k for _, k, _ in items], ['0', '1'])
         ours = {k: v for _, k, v in items[1][2]}
-        self.assertEqual(ours['AppName'], 'Ocarina of Time Co-op')   # launcher/brand.py STEAM_NAME, not the official one's
+        self.assertEqual(ours['AppName'], 'Ocarina of Time Co-op')   # brand.py STEAM_NAME, not the official one's
         self.assertEqual(struct.unpack('<I', ours['appid'])[0], sid)
         self.assertEqual(ours['LaunchOptions'], '"C:\\NX2navi\\data\\steam_play.pyw"')
         self.assertEqual(ours['AllowOverlay'], struct.pack('<I', 1))
