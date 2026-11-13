@@ -1,4 +1,4 @@
-// Co-op cutscenes watched together, and per-player dialog (coop_cutscene.c), game 1.1.1.
+// Co-op cutscenes watched together, the time of day and the era (coop_cutscene.c), game 1.1.1.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -15,13 +15,6 @@ int coop_cutscene_present(void);
 void coop_cutscene_frame(Cpu *c, uint64_t player, const char *area);
 // coop_puppet.c remotes (game thread): 1 while a story cutscene plays here and the puppets should not stand in it.
 int coop_cutscene_hides_puppets(void);
-
-// The player's own event table (RSDB/EventSetting), read once on a thread of its own when first asked for; any thread.
-// 0 not asked yet (this call starts the reading), 1 being read, 2 read (or given up: then the lists are empty).
-int coop_events_state(void);
-// The flags of the NPC talk events (HavePlayedEvent.<event> of every event whose component list is an NPC one: talks,
-// "near" lines, chases, each-frame lines), sorted; the count, 0 until read.
-int coop_events_talk_flags(const uint32_t **out);
 
 // ---- the era (coop_cutscene.c "the era")
 // Sequence_IsChildhood (Bool, true for a child, saved): the game sets it from each area it loads (an area of the other
