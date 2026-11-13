@@ -1,4 +1,4 @@
-// Co-op puppets, game 1.1.1: the other players of a co-op room shown in this game as Links of their own (in progress).
+// Co-op puppets, game 1.1.1: the other players of a co-op room shown in this game as Links of their own.
 //
 // The hook. The framework's per-frame update (main+0x6e6be0) steps the time manager (main+0x3b4e300) before it updates
 // the scene. The patch set "coop_puppet" (recomp/patches-v111.txt) turns that bl into a call of puppet_frame on the patch
@@ -30,15 +30,14 @@
 // Link's slot-0 node at slot 0's frame while Link's own slot 1 is empty (NX2NAVI_COOP_PUPPET_ARMS, default upper;
 // they hang and swing as Link's). Gear: the shadow puppet is
 // dressed as Link is, through the game's own EquipmentUser calls (puppet_dress, NX2NAVI_COOP_PUPPET_GEAR). Colours:
-// each Link's tunic and cap glow faintly in his player's colour over the darkened fabric, the
-// local Link's own included (section "colours", NX2NAVI_COOP_COLOUR_SELF / _TEST; off until a colour is set).
-// Remote players: POS v3 carries each player's gear, colour, pick, join place
-// and empty upper slots, so that the other players' puppets get gear, colours and arms as the shadow test's does; the
-// room gives every member its own colour (section "room colours": NX2NAVI_COOP_COLOUR picks, NX2NAVI_COOP_COLOURS=0 off).
-// NX2NAVI_COOP_PUPPET_TEST=spike|shadow are the one-game tests.
-// Kills, shared damage and difficulty live in coop_kill.c: this file's frame
-// hook hands it the area and Link (coop_kill_frame), its present switch runs it (coop_kill_present) and keeps the hook
-// on while it needs it, and coop_puppet_world_others tells it the members in the game world (from their POS).
+// each Link's tunic and cap glow faintly in their player's colour over the darkened fabric, the local Link's own
+// included (section "colours": the room's colours come from coop_colours.c; NX2NAVI_COOP_COLOUR_SELF / _TEST are tests).
+// Remote players: each game sends its Link's pose and what he wears and holds to the room (PUPPET and GEAR,
+// coop_ext_wire.h), so that the other players' puppets get gear and arms as the shadow test's does (section "the
+// other players"). NX2NAVI_COOP_PUPPET_TEST=spike|shadow are the one-game tests.
+// Kills, shared damage and difficulty live in coop_kill.c, cutscenes, the time of day and the era in coop_cutscene.c:
+// this file's frame hook hands them the area and Link (coop_kill_frame, coop_cutscene_frame), and its present switch
+// runs them (coop_kill_present, coop_cutscene_present) and keeps the hook on while they need it.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,11 +45,14 @@
 
 #include "cfg.h"
 #include "coop.h"
-#include "coop_offer.h"
-#include "coop_puppet.h"
-#include "coop_kill.h"
+#include "coop_colours.h"
 #include "coop_cutscene.h"
+#include "coop_ext.h"
+#include "coop_ext_wire.h"
+#include "coop_kill.h"
+#include "coop_puppet.h"
 #include "coop_tags.h"
+#include "fs.h"
 #include "host.h"
 #include "platform/platform.h"
 
@@ -565,9 +567,13 @@ static void puppet_release(Cpu *c, Puppet *p) {
     p->state = SP_GONE, p->actor = p->s.actor = p->s.handle = 0, p->asked_frame = P.frames;
 }
 
+// A log line about what a seat's player sent (seat > 0: within that seat's budget, coop_ext_log), else a test's.
+#define SEAT_LOG(seat, fmt, ...) ((seat) > 0 ? coop_ext_log((seat), fmt, __VA_ARGS__) : rt_log("coop: " fmt, __VA_ARGS__))
+
 // Puts the puppet at pos turned as rot (row-major), and has each of its AS slots play the node anim names at anim's
-// frame: asked for when it changes, the frame set every frame.
-static void puppet_pose(Cpu *c, Puppet *p, const float pos[3], const float rot[9], const Pose *anim, int verbose) {
+// frame: asked for when it changes, the frame set every frame. seat: the player it stands for (0: the shadow test),
+// for the log.
+static void puppet_pose(Cpu *c, Puppet *p, const float pos[3], const float rot[9], const Pose *anim, int seat) {
     uint64_t a = p->actor;
     uint32_t st = LD32(a + A_STATE);
     if (st != p->seen_state) {
@@ -601,8 +607,8 @@ static void puppet_pose(Cpu *c, Puppet *p, const float pos[3], const float rot[9
             int all = i == 0 && P.arms == ARMS_ALL;
             snprintf(p->asked[i], sizeof p->asked[i], "%s", node);
             p->play_ok[i] = as_play(c, a, node, i, -1.0f, all);
-            if (verbose) rt_log("coop: puppet: w=%.2f %s slot %d: play '%s'%s at frame %.1f -> %d", wsec(), p->s.text,
-                                i, node, mirror ? " (slot 0's, arms)" : all ? " (all slots)" : "", frame, p->play_ok[i]);
+            SEAT_LOG(seat, "puppet: w=%.2f %s slot %d: play '%s'%s at frame %.1f -> %d", wsec(), p->s.text, i, node,
+                     mirror ? " (slot 0's, arms)" : all ? " (all slots)" : "", frame, p->play_ok[i]);
         }
         if (p->play_ok[i]) as_frame_set(c, asc, i, frame);
     }
@@ -894,9 +900,16 @@ static void as_bb_log(Cpu *c, uint64_t from_asc, uint64_t to_asc) {
 // bone its EquipmentUserParam names. The puppet keeps PouchPlayer_<age>'s EquipmentUserRef (IsPouchUser false: it does
 // not dress itself from the local inventory).
 //
-// NX2NAVI_COOP_PUPPET_GEAR: 0 off; 1 (default) weapon, bow, shield (drawn or sheathed as Link's) and the static items;
-// 2 also the subweapon, tool and subtool (bottles, boomerang, sticks: each change makes and removes an actor).
-// NX2NAVI_COOP_PUPPET_GEAR_DRAWN=0 keeps the puppet's weapon and shield sheathed whatever Link does.
+// What may be asked for. A remote player's gear names actors of another game, so every name must belong to its slot's
+// family before anything is made (gear_dyn_ok, gear_stat_ok). The hand slots take j0 a sword (Weapon_Sword_*), j4 a
+// shield (Weapon_Shield_*), and j3 a bow item (Weapon_Range_*: slingshot, bow, hookshot) only on a puppet that has
+// component +0x358, which those items read with no check (below); the subweapon, tool and subtool slots (bottles,
+// boomerang, sticks) take nothing. The static slots take by kind: armour Armor_*, the sheath Weapon_Sheath_* or
+// Weapon_Lsheath_*, the quiver Weapon_Quiver_*, the accessories and the extra slot Armor_* or Item_Ocarina_*. A name
+// outside its slot's family is neither made nor taken off.
+//
+// NX2NAVI_COOP_PUPPET_GEAR: 0 off; otherwise (default 1) the weapon, bow and shield (drawn or sheathed as Link's) and
+// the static items. NX2NAVI_COOP_PUPPET_GEAR_DRAWN=0 keeps the puppet's weapon and shield sheathed whatever Link does.
 // NX2NAVI_COOP_PUPPET_GEAR_MASK (test, hex): the slots copied, bits 0..6 dynamic j0..j6, bits 8..20 static s0..s12.
 
 #define EU_DYN 0x20
@@ -931,8 +944,8 @@ typedef struct {
     char stat[GEAR_STAT][GEAR_NAME];
 } Gear;
 
-// The dynamic slots copied: weapon, bow, shield; then subweapon, tool, subtool with NX2NAVI_COOP_PUPPET_GEAR=2.
-static const int gear_js[] = {0, 3, 4, 1, 5, 6};
+// The dynamic slots copied: weapon, bow, shield (no family admits anything in the others).
+static const int gear_js[] = {0, 3, 4};
 
 #define GEAR_SETTLE 10        // frames the puppet is in the scene (state 4) before its first request
 #define GEAR_RETRY 60         // frames between two creates of one kind
@@ -1016,9 +1029,31 @@ static int gear_has_stat(const Gear *g, const char *name) {
     return 0;
 }
 
-// The static items the puppet is asked for: Link's, except the green adult tunic, which is the body's own (asking
-// for it removes static slot 1).
-static int gear_stat_wanted(const char *w) { return w[0] && gear_name_ok(w) && strcmp(w, "Armor_Adult_Normal"); }
+// The families (above): 1 when name may be asked for in dynamic slot j (bow_ok: the puppet has component +0x358),
+// or in static slot s.
+static int gear_dyn_ok(int j, const char *name, int bow_ok) {
+    if (!gear_name_ok(name)) return 0;
+    switch (j) {
+    case 0: return !strncmp(name, "Weapon_Sword_", 13);
+    case 3: return bow_ok && !strncmp(name, "Weapon_Range_", 13);
+    case 4: return !strncmp(name, "Weapon_Shield_", 14);
+    default: return 0;
+    }
+}
+
+static int gear_stat_ok(int s, const char *name) {
+    if (s < 0 || s >= GEAR_STAT || !gear_name_ok(name)) return 0;
+    switch (stat_kind[s]) {
+    case 3: return !strncmp(name, "Weapon_Sheath_", 14) || !strncmp(name, "Weapon_Lsheath_", 15);
+    case 4: return !strncmp(name, "Weapon_Quiver_", 14);
+    case 7: case 8: case 9: case 10: return !strncmp(name, "Armor_", 6);
+    default: return !strncmp(name, "Armor_", 6) || !strncmp(name, "Item_Ocarina_", 13);
+    }
+}
+
+// The static items the puppet is asked for: Link's in their slots' families, except the green adult tunic, which is
+// the body's own (asking for it removes static slot 1).
+static int gear_stat_wanted(int s, const char *w) { return w[0] && gear_stat_ok(s, w) && strcmp(w, "Armor_Adult_Normal"); }
 
 // A create of the kind is still in flight: its request cell is set (the in-flight bit at +0x12d0 is left out: it
 // stays set after the item is attached). df7b20 cancels a pending request of the kind itself, so this
@@ -1080,9 +1115,9 @@ static void gear_log_changes(const char *who, const char *side, const Gear *now,
 }
 
 // Makes the puppet's EU match want: one request per kind at a time, spaced, at most GEAR_TRIES each until what is
-// wanted of that kind changes, at most 2 requests a frame. all: also the subweapon, tool and subtool slots; drawn: 0
-// keeps the puppet's weapon and shield sheathed.
-static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, const char *who, int all, int drawn) {
+// wanted of that kind changes, at most 2 requests a frame, and only names of their slots' families. drawn: 0 keeps the
+// puppet's weapon and shield sheathed.
+static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, const char *who, int drawn) {
     if (gs->puppet != puppet) {
         memset(gs, 0, sizeof *gs);
         gs->puppet = puppet, gs->seen_frame = P.frames;
@@ -1108,8 +1143,8 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
     int asked = 0, match = 1;
     // Bow items (slot j3: slingshot, bow, hookshot) read their owner's component +0x358 (the behaviour-state
     // animation one, which Link has and the pause menu Link's copy has not) with no null check: the slingshot's
-    // update crashed at once on the puppet (f_7002dcee60 reading 0x7d8 via f_700082acc0). So the slot is
-    // left out while the puppet lacks that component.
+    // update crashed at once on the puppet (f_7002dcee60 reading 0x7d8 via f_700082acc0). So no bow item is asked
+    // for, in any slot, while the puppet lacks that component (gear_dyn_ok).
     uint64_t comps = LD64(puppet + A_COMPONENTS);
     int has_bsa = ok_ptr(comps, 0x360) && LD64(comps + 0x358) != 0;
     if (!has_bsa && want->dyn[3][0] && !gs->bow_logged) {
@@ -1120,12 +1155,11 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
 
     for (size_t q = 0; q < sizeof gear_js / sizeof *gear_js; q++) {
         int j = gear_js[q], kind = dyn_kind[j];
-        if (q >= 3 && !all) break;
-        if (!(gear_mask >> j & 1) || (j == 3 && !has_bsa)) continue;
+        if (!(gear_mask >> j & 1)) continue;
         const char *w = want->dyn[j], *h = have.dyn[j];
         unsigned ws = want->state[j] <= 2 ? want->state[j] : 0u;   // 0 stowed (not shown), 1 drawn, 2 sheathed
         if (ws == 1 && !drawn) ws = 2;
-        int ok = gear_name_ok(w);
+        int ok = gear_dyn_ok(j, w, has_bsa);
         gear_want(gs, kind, ok ? w : "", ok ? ws : 0);
         if (ok ? strcmp(w, h) || have.state[j] != ws : !w[0] && h[0]) {
             match = 0;
@@ -1169,7 +1203,7 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
     for (int s = 0; s < GEAR_STAT; s++) {   // static: Link's items the puppet lacks
         int kind = stat_kind[s];
         const char *w = want->stat[s];
-        if (!(gear_mask >> (8 + s) & 1) || !gear_stat_wanted(w) || gear_has_stat(&have, w)) continue;
+        if (!(gear_mask >> (8 + s) & 1) || !gear_stat_wanted(s, w) || gear_has_stat(&have, w)) continue;
         match = 0;
         gear_want(gs, kind, w, 0);
         if (asked >= 2 || !gear_may(gs, eu, kind, 1, who)) continue;
@@ -1197,27 +1231,18 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
     }
 }
 
-// Per puppet actor: by least recent use (3 remote puppets and the shadow).
-static GearSync gear_sync[4];
-static uint32_t gear_used[4];
-
-static GearSync *gear_sync_for(uint64_t puppet) {
-    int k = 0;
-    for (int i = 0; i < 4; i++)
-        if (gear_sync[i].puppet == puppet) { k = i; goto found; }
-    for (int i = 1; i < 4; i++)
-        if (gear_used[i] < gear_used[k]) k = i;
-found:
-    gear_used[k] = P.frames;
-    return &gear_sync[k];
-}
+// One gear state per puppet: slot 0 the shadow test's, slots 1..COOP_PLAYERS the puppet of the player in that seat
+// (coop_ext.h). Every puppet keeps its own, so no two take turns on one (a state starts again only when another actor
+// stands in its slot: gear_apply).
+static GearSync gear_sync[COOP_PLAYERS + 1];
 
 // Dresses a puppet as want says: called every frame while the puppet lives; it asks for nothing while the puppet
 // matches, so it covers the puppet being made (or made again after an area change) and every change of Link's gear.
-// The shadow test passes Link's gear of DELAY frames ago (shadow_gear), a remote player's puppet that player's gear.
-static void puppet_dress(Cpu *c, uint64_t puppet, const Gear *want, const char *who) {
-    if (!gear_mode || !puppet || !want) return;
-    gear_apply(c, puppet, want, gear_sync_for(puppet), who, gear_mode == 2, gear_drawn);
+// The shadow test passes Link's gear of DELAY frames ago (shadow_gear, slot 0), a remote player's puppet that
+// player's gear (slot: their seat).
+static void puppet_dress(Cpu *c, int slot, uint64_t puppet, const Gear *want, const char *who) {
+    if (!gear_mode || !puppet || !want || slot < 0 || slot > COOP_PLAYERS) return;
+    gear_apply(c, puppet, want, &gear_sync[slot], who, gear_drawn);
 }
 
 // The shadow test's gear: Link's gear of each frame, kept as long as his poses (P.ring).
@@ -1295,8 +1320,8 @@ static void shadow(Cpu *c, uint64_t player) {
         as_bb_info(p->s.text, as_control(p->actor));
     }
     if (P.bb_copy) as_bb_copy(c, as_control(player), as_control(p->actor));   // test: Link's arm layers
-    puppet_pose(c, p, pos, rot, then, 1);
-    puppet_dress(c, p->actor, gear_then, "shadow");
+    puppet_pose(c, p, pos, rot, then, 0);
+    puppet_dress(c, 0, p->actor, gear_then, "shadow");
     uint64_t a = p->actor;
     if ((P.frames - p->asked_frame) % 60 == 0) {
         rt_log("coop: puppet: w=%.2f %s at %.2f %.2f %.2f (Link %.2f %.2f %.2f, a second ago %.2f %.2f %.2f)", wsec(),
@@ -1310,81 +1335,88 @@ static void shadow(Cpu *c, uint64_t player) {
     (void)w;   // test: the shadow stays until the game removes it (it is asked for again after an area change)
 }
 
-// ---- the other players of a co-op room. Each sends its Link's pose (POS, coop_proto.h) about 15 times a second while
-// it is in a room with others; a pose received is kept with its arrival time (the coop thread), and every frame the
-// game thread shows each other player whose Link is in this Link's area as a puppet at his pose of about 100 ms ago,
-// between the two poses received around then (their senders' clocks put on ours by the smallest delay seen). A
-// puppet goes when its player leaves the area, the room or the world, or goes silent for 3 s. A pose counts only above
-// the last one taken from the same member in the same session (coop_pos_fresh): the session layer can deliver a
-// message again (coop.h), and an old pose must not move a puppet back while the player's own keep arriving. After 3 s
-// with none taken, the next is taken whatever its counter, so a relay that held a player's datagrams back that long can
-// replay the player's recorded poses: the puppet walks an old path, and nothing else (progress, saves) follows from it.
+// ---- the other players of a co-op room. Each game sends its Link's pose (PUPPET, coop_ext_wire.h) about 15 times a
+// second while others are in its room, and what he wears and holds (GEAR) when that changes and when a player comes.
+// The co-op thread keeps each seat's poses with their arrival times (coop_ext.h names the room's players by seat), and
+// every frame the game thread shows each other player whose Link is in this Link's area as a puppet at their pose of
+// about 100 ms ago, between the two poses received around then (their senders' clocks put on ours by the smallest
+// delay seen). A puppet goes when its player leaves the area, the room or the world, or goes silent for 3 s. Only the
+// room's players reach this file (coop.c delivers nothing from a player who is not on the host's list), and a pose
+// counts only above the last one taken from the same seat and gen (coop_pos_fresh): a PUPPET is sent unreliably and
+// may come late, and an old pose must not move a puppet back while the player's own keep arriving.
 //
-// POS v3: a POS also carries the sender's gear (when it changes, three POS in
-// a row, and every 2 s), its colour, the colour it picked and its place in the room's join order (section "room
-// colours"), and which of its AS slots 1..3 play nothing (the arms: a puppet's slot there plays slot 0's node, as in
-// the shadow test). A remote puppet is dressed in its player's gear (puppet_dress) and tinted in its player's colour.
-// NX2NAVI_COOP_POS_GEAR=0 sends no gear (the puppets then wear nothing); NX2NAVI_COOP_PUPPET_GEAR=0 dresses none.
+// What another game's numbers can do here: coop_puppet_parse refuses a position beyond 1e6 m, a yaw beyond 7 radians
+// and a frame beyond 1e6, and remote_pose blends between two poses taken with its factor held to 0..1, so every
+// transform and frame handed to the game is finite and bounded. Their gear's names pass the slots' families (section
+// "gear") before anything is made.
+//
+// A GEAR goes reliably to everyone once this Link's gear has stayed the same for GEAR_SEND_STABLE_MS (a draw passes
+// through "nothing" for a frame), at most every GEAR_SEND_SPACE_MS, and whenever a player comes, then once more
+// AGAIN_MS later (the newcomer's room may list this game a moment after this game's room listed them, and a message
+// from a player not yet listed is not delivered there). A PUPPET carries the signature of the last GEAR sent.
+//
+// NX2NAVI_COOP_PUPPETS=0 shows no puppets in this game; it still sends its own, so that the others see this player.
+// The puppets' actors come from the Co-op puppets mod (tools/make_puppet_mod.py): when the game's files lack their
+// packs (the mod missing or switched off), no puppet is asked for, and the log says so once.
 
 #define HIST 8
 #define SILENT_MS 3000
 #define BEHIND_MS 100
-#define GEAR_EVERY_MS 2000    // the gear goes again this often while it stays the same
-#define GEAR_REPEAT 3         // POS in a row that carry a changed gear
+#define PUPPET_EVERY_MS 66        // 15 a second
+#define GEAR_SEND_STABLE_MS 100
+#define GEAR_SEND_SPACE_MS 500    // the room's router takes 4 GEAR a second from one player (coop_ext.c)
+#define AGAIN_MS 3000
+static const char *const puppet_packs[2] = {"Pack/Actor/CoopPuppet_Child.pack.zs", "Pack/Actor/CoopPuppet_Adult.pack.zs"};
+
 typedef struct {
-    CoopPos pose[HIST];     // the latest poses by pseq, newest at head
+    CoopPuppetMsg pose[HIST];   // the latest poses by pseq, newest at head
     uint64_t recv_ms[HIST];
     int n, head;
-    int32_t offset;         // our clock minus the sender's, the smallest seen (rising 1 ms a message so it follows)
-    CoopPosSeen seen;       // the sender's counter, per session
-    CoopGear gear;          // POS v3: the sender's gear, from the last POS that carried it
-    uint32_t gear_sig;      // its signature (0: none yet)
-    uint64_t gear_session;  // the session it came in
-    uint32_t got, got_gear; // poses taken, and those with gear (for the log)
+    int32_t offset;             // our clock minus the sender's, the smallest seen (rising 1 ms a message so it follows)
+    CoopPosSeen seen;           // the sender's counter, per gen
+    CoopGear gear;              // the sender's gear, from their last GEAR
+    uint32_t gear_sig;          // its signature (0: none yet)
+    uint32_t got, got_gear;     // PUPPET and GEAR taken (for the log)
 } Remote;
 
 static struct {
-    PlatMutex lock;         // around r, session and the view's copy below
-    Remote r[COOP_MAX_MEMBERS + 1];
-    uint64_t session[COOP_MAX_MEMBERS + 1];   // each member's session, as the view lists it
-    char name[COOP_MAX_MEMBERS + 1][COOP_NAME_MAX + 1];   // and its name
-    int in_view[COOP_MAX_MEMBERS + 1];        // listed by the view now
-    _Atomic int others;     // other members of the room this session is in (the view hook)
-    _Atomic int self;
-    _Atomic int in_room;    // joined (or reconnecting to) a room
-    _Atomic int alive;      // puppets the game thread holds
-    _Atomic unsigned epoch; // one more at every new room or leave: the join place starts again
-    uint64_t epoch_ms;      // when the current room was first seen
-    char room[COOP_SECRET_TEXT + 1];
+    PlatMutex lock;             // around r, gen, name and came
+    Remote r[COOP_PLAYERS + 1];             // by seat
+    uint32_t gen[COOP_PLAYERS + 1];         // each seat's gen as the glue's view gives it (0: free)
+    char name[COOP_PLAYERS + 1][COOP_NAME_CAP];
+    uint32_t came;              // one more whenever another player comes (a seat with a new gen)
+    _Atomic int others;         // the other players of the room (the view hook)
+    _Atomic int self;           // this game's seat
+    _Atomic int in_room;
+    _Atomic int alive;          // puppets the game thread holds
+    _Atomic int files;          // the puppets' packs are in the game's files: 1, 0, or -1 not looked for yet
     // the game thread's
-    Puppet puppet[COOP_MAX_MEMBERS + 1];
-    uint32_t pseq;
-    uint32_t sent, sent_gear;
-    uint32_t sent_sig;      // the gear signature sent last
-    int gear_left;          // POS still to carry a changed gear
-    uint64_t gear_at;       // when gear went last
-    uint32_t logged_sig[COOP_MAX_MEMBERS + 1];   // the remote gear last logged, per member
-    uint8_t logged_upper[COOP_MAX_MEMBERS + 1];
-    int pos_gear;           // NX2NAVI_COOP_POS_GEAR (default 1)
-} N;
+    Puppet puppet[COOP_PLAYERS + 1];
+    uint32_t puppet_gen[COOP_PLAYERS + 1];  // the gen of the player each puppet was asked for
+    uint32_t pseq, sent, sent_gear;
+    uint64_t puppet_at;         // when the last PUPPET went
+    CoopGear gear;              // this Link's gear as it goes out (gear_to_msg)
+    uint32_t sig, sig_sent;     // its signature (0: not read yet), and that of the last GEAR sent
+    uint64_t sig_since, gear_at, again_at;
+    uint32_t came_seen;
+    int gear_due;               // a GEAR to everyone as soon as one may go (a player came)
+    uint32_t logged_sig[COOP_PLAYERS + 1];    // the remote gear last logged, per seat
+    uint8_t logged_upper[COOP_PLAYERS + 1];
+} N = {.files = -1};
 
-// room colours (below): this player's place, pick and colour for the POS it sends, and the assignment every frame
-static void room_colours(const Remote *r, const uint64_t *session, const int *in_view, char (*names)[COOP_NAME_MAX + 1],
-                         uint64_t now);
-static uint8_t room_colour_byte(void);
-static uint8_t room_want_byte(void);
-static uint16_t room_place(void);
-
-static void on_pos(int from, const uint8_t *bytes, size_t n, void *user) {
+static void on_puppet(int seat, const uint8_t *b, size_t n, void *user) {
     (void)user;
-    CoopPos p;
-    CoopGear g;
-    if (from < 1 || from > COOP_MAX_MEMBERS || !coop_pos_parse_gear(bytes, n, &p, &g)) return;
+    CoopPuppetMsg p;
+    if (seat < 1 || seat > COOP_PLAYERS) return;
+    if (!coop_puppet_parse(b, n, &p)) {
+        coop_ext_log(seat, "puppet: a PUPPET of %zu bytes from seat %d does not parse; dropped", n, seat);
+        return;
+    }
     uint64_t now = plat_now_ms();
     plat_mutex_lock(&N.lock);
-    Remote *r = &N.r[from];
-    int fresh = coop_pos_fresh(&r->seen, N.session[from], p.pseq, now);
-    if (fresh == 2) r->n = 0;   // another session's poses, or ones from before a silence: not this sender's now
+    Remote *r = &N.r[seat];
+    int fresh = coop_pos_fresh(&r->seen, N.gen[seat], p.pseq, now);
+    if (fresh == 2) r->n = 0;   // another player's poses, or ones from before a silence: not this sender's now
     if (fresh) {   // a pose sent again or an older one is dropped
         int32_t off = (int32_t)((uint32_t)now - p.t_ms);
         r->offset = !r->n || off < r->offset ? off : r->offset + 1;
@@ -1392,74 +1424,61 @@ static void on_pos(int from, const uint8_t *bytes, size_t n, void *user) {
         r->pose[r->head] = p, r->recv_ms[r->head] = now;
         if (r->n < HIST) r->n++;
         r->got++;
-        if (p.flags & COOP_POS_GEAR) {
-            r->gear = g, r->gear_sig = coop_gear_sig(&g), r->gear_session = N.session[from];
-            r->got_gear++;
-        }
     }
     plat_mutex_unlock(&N.lock);
 }
 
-static void on_view(const CoopView *v, void *user) {
+static void on_gear(int seat, const uint8_t *b, size_t n, void *user) {
     (void)user;
-    int in_room = v->state == COOP_JOINED || v->state == COOP_RECONNECTING;
-    int others = v->state == COOP_JOINED && v->n > 1 ? v->n - 1 : 0;
-    N.others = others;
-    N.self = v->self;
+    CoopGear g;
+    uint32_t sig;
+    if (seat < 1 || seat > COOP_PLAYERS) return;
+    if (!coop_gear_parse(b, n, &g, &sig)) {
+        coop_ext_log(seat, "puppet: a GEAR of %zu bytes from seat %d does not parse; dropped", n, seat);
+        return;
+    }
     plat_mutex_lock(&N.lock);
-    if (!others) memset(N.r, 0, sizeof N.r);   // a new room starts from nothing
-    memset(N.session, 0, sizeof N.session);
-    memset(N.in_view, 0, sizeof N.in_view);
-    for (int i = 0; i < v->n; i++) {
-        int id = v->member[i].id;
-        if (id < 1 || id > COOP_MAX_MEMBERS) continue;
-        N.session[id] = v->member[i].session, N.in_view[id] = 1;
-        snprintf(N.name[id], sizeof N.name[id], "%s", v->member[i].name);
-    }
-    if (v->self >= 1 && v->self <= COOP_MAX_MEMBERS) snprintf(N.name[v->self], sizeof N.name[v->self], "%s", v->name);
-    if (!in_room ? N.in_room : strcmp(N.room, v->code) != 0) {   // a new room, or out of one: the place starts again
-        snprintf(N.room, sizeof N.room, "%s", in_room ? v->code : "");
-        N.epoch_ms = plat_now_ms();
-        N.epoch++;
-    }
-    N.in_room = in_room;
+    N.r[seat].gear = g, N.r[seat].gear_sig = sig, N.r[seat].got_gear++;
     plat_mutex_unlock(&N.lock);
 }
 
-// Kills and difficulty (coop_kill.c, any thread): the other members in the game world now, by their POS: accepted and
-// identified (coop_game_shown), heard within SILENT_MS, and their newest pose says IN_WORLD. -1 when no member's POS
-// came at all (the puppets are off: no POS goes out), so that the caller counts the roster instead.
+static void on_view(const CoopExtView *v, void *user) {
+    (void)user;
+    int others = 0;
+    plat_mutex_lock(&N.lock);
+    for (int s = 1; s <= COOP_PLAYERS; s++) {
+        const CoopSeat *t = &v->seat[s];
+        uint32_t gen = v->in_room && t->id ? t->gen : 0;
+        if (gen != N.gen[s]) {   // another player in the seat, or none: nothing of the last one's stays
+            memset(&N.r[s], 0, sizeof N.r[s]);
+            if (gen && !t->self) N.came++;
+            N.gen[s] = gen;
+        }
+        snprintf(N.name[s], sizeof N.name[s], "%s", gen ? t->name : "");
+        others += gen && !t->self;
+    }
+    plat_mutex_unlock(&N.lock);
+    N.others = others, N.self = v->self, N.in_room = v->in_room;
+}
+
+// Kills and difficulty (coop_kill.c, any thread): the other players of the room whose Link is in the game world now
+// (coop_ext.h: their last pose names an area and is fresh).
 int coop_puppet_world_others(void) {
-    if (!N.others) return 0;
-    uint32_t shown = coop_game_shown();
-    uint64_t now = plat_now_ms();
-    int n = 0, heard = 0, self = N.self;
-    plat_mutex_lock(&N.lock);
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
-        const Remote *r = &N.r[id];
-        if (id == self || !r->n) continue;
-        heard = 1;
-        if (shown >> id & 1 && now - r->recv_ms[r->head] < SILENT_MS && (r->pose[r->head].flags & COOP_POS_IN_WORLD)) n++;
-    }
-    plat_mutex_unlock(&N.lock);
-    return heard ? n : -1;
+    CoopExtView v;
+    coop_ext_view(&v);
+    int n = 0;
+    for (int s = 1; s <= COOP_PLAYERS; s++) n += v.seat[s].id && !v.seat[s].self && v.seat[s].in_world;
+    return n;
 }
 
-// Kills tests (coop_kill.c, any thread): the other members whose newest POS (heard within SILENT_MS, accepted and
-// identified, IN_WORLD) names this area.
+// Kills tests (coop_kill.c, any thread): the other players whose Link is in the game world in this area.
 int coop_puppet_area_others(const char *area) {
-    if (!N.others || !area || !area[0]) return 0;
-    uint32_t shown = coop_game_shown();
-    uint64_t now = plat_now_ms();
-    int n = 0, self = N.self;
-    plat_mutex_lock(&N.lock);
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
-        const Remote *r = &N.r[id];
-        if (id == self || !r->n || !(shown >> id & 1) || now - r->recv_ms[r->head] >= SILENT_MS) continue;
-        const CoopPos *q = &r->pose[r->head];
-        if ((q->flags & COOP_POS_IN_WORLD) && !strcmp(q->area, area)) n++;
-    }
-    plat_mutex_unlock(&N.lock);
+    if (!area || !area[0]) return 0;
+    CoopExtView v;
+    coop_ext_view(&v);
+    int n = 0;
+    for (int s = 1; s <= COOP_PLAYERS; s++)
+        n += v.seat[s].id && !v.seat[s].self && v.seat[s].in_world && !strcmp(v.seat[s].area, area);
     return n;
 }
 
@@ -1469,19 +1488,24 @@ static float lerp_angle(float a, float b, float t) {
     return a + (d - 3.14159265f) * t;
 }
 
-// The pose of r shown now: between the two poses around BEHIND_MS ago (sender's clock), else the nearest one.
-static void remote_pose(const Remote *r, uint32_t now, CoopPos *out) {
+// The pose of r shown now: between the two poses around BEHIND_MS ago (sender's clock), else the nearest one. The
+// blend's factor is held to 0..1 (a sender's clock that runs back, or two poses of one time, would push it outside), so
+// whatever comes out lies between two poses taken.
+static void remote_pose(const Remote *r, uint32_t now, CoopPuppetMsg *out) {
     uint32_t t = now - (uint32_t)r->offset - BEHIND_MS;
-    const CoopPos *newest = &r->pose[r->head];
+    const CoopPuppetMsg *newest = &r->pose[r->head];
     *out = *newest;
     if ((int32_t)(t - newest->t_ms) >= 0) return;
     for (int k = 0; k + 1 < r->n; k++) {
-        const CoopPos *b = &r->pose[(r->head - k + HIST) % HIST], *a = &r->pose[(r->head - k - 1 + HIST) % HIST];
+        const CoopPuppetMsg *b = &r->pose[(r->head - k + HIST) % HIST], *a = &r->pose[(r->head - k - 1 + HIST) % HIST];
         if ((int32_t)(t - a->t_ms) < 0) {
             *out = *a;   // older than every pose kept: the oldest
             continue;
         }
-        float f = b->t_ms == a->t_ms ? 1.0f : (float)(int32_t)(t - a->t_ms) / (float)(int32_t)(b->t_ms - a->t_ms);
+        int32_t span = (int32_t)(b->t_ms - a->t_ms);
+        float f = span <= 0 ? 1.0f : (float)(int32_t)(t - a->t_ms) / (float)span;
+        if (!(f >= 0.0f)) f = 0.0f;
+        if (f > 1.0f) f = 1.0f;
         *out = f < 0.5f ? *a : *b;
         for (int i = 0; i < 3; i++) out->pos[i] = a->pos[i] + (b->pos[i] - a->pos[i]) * f;
         out->yaw = lerp_angle(a->yaw, b->yaw, f);
@@ -1498,177 +1522,197 @@ static void yaw_rot(float yaw, float rot[9]) {
     memcpy(rot, m, sizeof m);
 }
 
-// The puppet's Gear (gear section) from a POS's gear block, and back.
-static void gear_from_pos(const CoopGear *g, Gear *out) {
+// The puppet's Gear (section "gear") from a GEAR, and this Link's for one: only names of their slots' families go out
+// (a bow item too: the receiving puppet decides whether it can carry one).
+static void gear_from_msg(const CoopGear *g, Gear *out) {
     memset(out, 0, sizeof *out);
-    for (int j = 0; j < COOP_POS_GEAR_DYN && j < GEAR_DYN; j++) {
+    for (int j = 0; j < COOP_GEAR_DYN && j < GEAR_DYN; j++) {
         snprintf(out->dyn[j], sizeof out->dyn[j], "%s", g->dyn[j]);
         out->state[j] = g->state[j];
     }
-    for (int s = 0; s < COOP_POS_GEAR_STAT && s < GEAR_STAT; s++) snprintf(out->stat[s], sizeof out->stat[s], "%s", g->stat[s]);
+    for (int s = 0; s < COOP_GEAR_STAT && s < GEAR_STAT; s++) snprintf(out->stat[s], sizeof out->stat[s], "%s", g->stat[s]);
 }
 
-static void gear_to_pos(const Gear *g, CoopGear *out) {
+static void gear_to_msg(const Gear *g, CoopGear *out) {
     memset(out, 0, sizeof *out);
-    for (int j = 0; j < COOP_POS_GEAR_DYN && j < GEAR_DYN; j++) {
-        if (!g->dyn[j][0] || !gear_name_ok(g->dyn[j])) continue;   // only the game's equipment actors go out
+    for (int j = 0; j < COOP_GEAR_DYN && j < GEAR_DYN; j++) {
+        if (!gear_dyn_ok(j, g->dyn[j], 1)) continue;
         snprintf(out->dyn[j], sizeof out->dyn[j], "%s", g->dyn[j]);
         out->state[j] = g->state[j] <= 2 ? g->state[j] : 0;
     }
-    for (int s = 0; s < COOP_POS_GEAR_STAT && s < GEAR_STAT; s++)
-        if (g->stat[s][0] && gear_name_ok(g->stat[s])) snprintf(out->stat[s], sizeof out->stat[s], "%s", g->stat[s]);
+    for (int s = 0; s < COOP_GEAR_STAT && s < GEAR_STAT; s++)
+        if (gear_stat_ok(s, g->stat[s])) snprintf(out->stat[s], sizeof out->stat[s], "%s", g->stat[s]);
 }
 
-static void gear_log_line(const char *who, const char *what, const CoopGear *g, uint32_t sig) {
-    char line[900];
-    int o = snprintf(line, sizeof line, "coop: pos: w=%.2f %s %s (sig %08x):", wsec(), who, what, sig);
-    for (int j = 0; j < COOP_POS_GEAR_DYN && o < (int)sizeof line - 64; j++)
+// seat > 0: a seat's gear, logged within that seat's budget; 0: this Link's.
+static void gear_log_line(int seat, const char *who, const char *what, const CoopGear *g, uint32_t sig) {
+    char line[460];
+    int o = snprintf(line, sizeof line, "puppet: w=%.2f %s %s (sig %08x):", wsec(), who, what, sig);
+    for (int j = 0; j < COOP_GEAR_DYN && o < (int)sizeof line - 64; j++)
         if (g->dyn[j][0]) o += snprintf(line + o, sizeof line - o, " j%d '%s' %u", j, g->dyn[j], g->state[j]);
-    for (int s = 0; s < COOP_POS_GEAR_STAT && o < (int)sizeof line - 64; s++)
+    for (int s = 0; s < COOP_GEAR_STAT && o < (int)sizeof line - 64; s++)
         if (g->stat[s][0]) o += snprintf(line + o, sizeof line - o, " s%d '%s'", s, g->stat[s]);
-    rt_log("%s", line);
+    SEAT_LOG(seat, "%s", line);
 }
 
-static void send_pose(Cpu *c, uint64_t player, const char *area) {
-    CoopPos me;
-    memset(&me, 0, sizeof me);
-    me.pseq = ++N.pseq, me.t_ms = (uint32_t)plat_now_ms();
-    CoopGear cg;
-    int with_gear = 0;
-    if (player) {
+// This Link's pose now as a PUPPET; flags 0 (not in the world) without Link. What the codec does not carry is left out:
+// a node name too long, a frame not finite or too large; a place out of its bounds sends him as not in the world.
+static void send_puppet(Cpu *c, uint64_t player, const char *area, uint64_t now) {
+    CoopPuppetMsg m;
+    memset(&m, 0, sizeof m);
+    m.pseq = ++N.pseq, m.t_ms = (uint32_t)now;
+    if (player && area[0] && strlen(area) <= COOP_PUPPET_TEXT) {
         Pose p;
         pose_of(c, player, &p);
-        me.flags = (uint8_t)(COOP_POS_IN_WORLD | (is_adult(player) ? COOP_POS_ADULT : 0));
-        snprintf(me.area, sizeof me.area, "%s", area);
-        memcpy(me.pos, p.pos, sizeof me.pos);
-        me.yaw = atan2f(p.rot[2], p.rot[8]);
-        me.nslots = (uint8_t)p.nslots;
-        for (int i = 0; i < p.nslots; i++) {
-            snprintf(me.slot[i].node, sizeof me.slot[i].node, "%s", p.node[i]);
-            me.slot[i].frame = p.frame[i];
-            if (i >= 1 && i <= 3 && !p.node[i][0]) me.upper |= (uint8_t)(1u << (i - 1));
-        }
-        if (N.pos_gear) {
-            Gear g;
-            gear_read(c, player, &g);
-            if (!P.test && gear_test[0]) {   // test: other gear than Link's goes out (NX2NAVI_COOP_PUPPET_GEAR_TEST)
-                static int said;
-                if (!said++) rt_log("coop: pos: the gear sent is changed by NX2NAVI_COOP_PUPPET_GEAR_TEST='%s'", gear_test);
-                gear_test_apply(&g);
+        float yaw = atan2f(p.rot[2], p.rot[8]);
+        int ok = isfinite(yaw);
+        for (int k = 0; k < 3; k++) ok &= isfinite(p.pos[k]) && fabsf(p.pos[k]) <= COOP_PUPPET_POS_MAX;
+        if (ok) {
+            m.flags = (uint8_t)(COOP_PUPPET_IN_WORLD | (is_adult(player) ? COOP_PUPPET_ADULT : 0));
+            snprintf(m.area, sizeof m.area, "%s", area);
+            memcpy(m.pos, p.pos, sizeof m.pos);
+            m.yaw = yaw;
+            m.nslots = (uint8_t)(p.nslots < COOP_PUPPET_SLOTS ? p.nslots : COOP_PUPPET_SLOTS);
+            for (int i = 0; i < m.nslots; i++) {
+                if (strlen(p.node[i]) <= COOP_PUPPET_TEXT) snprintf(m.slot[i].node, sizeof m.slot[i].node, "%s", p.node[i]);
+                m.slot[i].frame = isfinite(p.frame[i]) && fabsf(p.frame[i]) <= COOP_PUPPET_FRAME_MAX ? p.frame[i] : 0.0f;
+                if (i >= 1 && i <= 3 && !p.node[i][0]) m.upper |= (uint8_t)(1u << (i - 1));
             }
-            gear_to_pos(&g, &cg);
-            me.gear_sig = coop_gear_sig(&cg);
-            uint64_t now = plat_now_ms();
-            if (me.gear_sig != N.sent_sig) {
-                gear_log_line("Link", N.sent_sig ? "wears other gear: sent" : "gear sent", &cg, me.gear_sig);
-                N.sent_sig = me.gear_sig, N.gear_left = GEAR_REPEAT;
-            }
-            if (N.gear_left > 0 || now - N.gear_at >= GEAR_EVERY_MS) {
-                with_gear = 1, N.gear_at = now;
-                if (N.gear_left > 0) N.gear_left--;
-            }
+            m.gear_sig = N.sig_sent;
         }
     }
-    me.colour = room_colour_byte(), me.want = room_want_byte(), me.place = room_place();
-    uint8_t buf[COOP_MAX_PAYLOAD];
-    size_t n = coop_pos_pack_gear(buf, sizeof buf, &me, with_gear ? &cg : NULL);
-    if (!n && with_gear) {   // names too long for one datagram: the pose without them
+    uint8_t buf[COOP_PUPPET_MSG_MAX];
+    size_t n = coop_puppet_pack(&m, buf, sizeof buf);
+    if (!n) {
         static int said;
-        if (!said++) rt_log("coop: pos: the gear does not fit a POS; sent without it");
-        with_gear = 0;
-        n = coop_pos_pack_gear(buf, sizeof buf, &me, NULL);
+        if (!said++) rt_log("coop: puppet: this Link's pose does not pack (area '%s'): sent as not in the world", area);
+        CoopPuppetMsg none = {.pseq = m.pseq, .t_ms = m.t_ms};
+        n = coop_puppet_pack(&none, buf, sizeof buf);
     }
-    if (n && coop_send(COOP_K_POS, buf, n)) N.sent++, N.sent_gear += with_gear;
+    if (n && coop_ext_send(0, COOP_K_PUPPET, buf, n, 0)) N.sent++;
+}
+
+// This Link's gear (read at PUPPET's pace while he is in the world; player 0 keeps the last), and the GEAR that goes when
+// it changed or a player came.
+static void gear_tick(Cpu *c, uint64_t player, uint64_t now) {
+    if (player) {
+        Gear g;
+        gear_read(c, player, &g);
+        if (!P.test && gear_test[0]) {   // test: other gear than Link's goes out (NX2NAVI_COOP_PUPPET_GEAR_TEST)
+            static int said;
+            if (!said++) rt_log("coop: puppet: the gear sent is changed by NX2NAVI_COOP_PUPPET_GEAR_TEST='%s'", gear_test);
+            gear_test_apply(&g);
+        }
+        CoopGear cg;
+        gear_to_msg(&g, &cg);
+        uint32_t sig = coop_gear_sig(&cg);
+        if (sig != N.sig) N.gear = cg, N.sig = sig, N.sig_since = now;
+    }
+    plat_mutex_lock(&N.lock);
+    uint32_t came = N.came;
+    plat_mutex_unlock(&N.lock);
+    if (came != N.came_seen) N.came_seen = came, N.gear_due = 1, N.again_at = now + AGAIN_MS;
+    if (N.again_at && now >= N.again_at) N.again_at = 0, N.gear_due = 1;
+    if (!N.sig) return;   // not read yet: nothing to send
+    int changed = N.sig != N.sig_sent && now - N.sig_since >= GEAR_SEND_STABLE_MS;
+    if ((!changed && !N.gear_due) || now - N.gear_at < GEAR_SEND_SPACE_MS) return;
+    uint8_t buf[COOP_GEAR_MSG_MAX];
+    size_t n = coop_gear_pack(&N.gear, buf, sizeof buf);
+    if (n && !coop_ext_send(0, COOP_K_GEAR, buf, n, 1)) return;   // the room's queue is full: again at the next PUPPET
+    if (!n) rt_log("coop: puppet: this Link's gear does not pack (sig %08x): not sent", N.sig);
+    else if (N.sig != N.sig_sent) gear_log_line(0, "Link", N.sig_sent ? "wears other gear: sent" : "gear sent", &N.gear, N.sig);
+    N.sig_sent = N.sig, N.gear_at = now, N.gear_due = 0, N.sent_gear += n != 0;
 }
 
 static void remotes(Cpu *c, uint64_t player, const char *area) {
-    int others = N.others, self = N.self;
-    static uint64_t pose_at;   // test: on a clock, not every 4th frame (the frame rate is unlimited)
-    uint64_t pose_now = plat_now_ms();
-    if (others && pose_now - pose_at >= 66) pose_at = pose_now, send_pose(c, player, area);   // 15 a second
-    static Remote r[COOP_MAX_MEMBERS + 1];
-    static uint64_t session[COOP_MAX_MEMBERS + 1];
-    static int in_view[COOP_MAX_MEMBERS + 1];
-    static char names[COOP_MAX_MEMBERS + 1][COOP_NAME_MAX + 1];
+    int others = N.others, self = N.self, files = N.files;
+    uint64_t now = plat_now_ms();
+    if (others && now - N.puppet_at >= PUPPET_EVERY_MS) {   // on a clock, not every n-th frame (the frame rate is unlimited)
+        N.puppet_at = now;
+        gear_tick(c, area[0] ? player : 0, now);
+        send_puppet(c, player, area, now);
+    }
+    static Remote r[COOP_PLAYERS + 1];
+    static uint32_t gen[COOP_PLAYERS + 1];
+    static char names[COOP_PLAYERS + 1][COOP_NAME_CAP];
     plat_mutex_lock(&N.lock);
     memcpy(r, N.r, sizeof r);
-    memcpy(session, N.session, sizeof session);
-    memcpy(in_view, N.in_view, sizeof in_view);
+    memcpy(gen, N.gen, sizeof gen);
     memcpy(names, N.name, sizeof names);
     plat_mutex_unlock(&N.lock);
-    uint64_t now = plat_now_ms();
-    room_colours(r, session, in_view, names, now);
-    int alive = 0;
-    uint32_t shown = coop_game_shown();   // members accepted and identified (coop_offer_shown)
     static uint64_t stats_at;
     if (others && now - stats_at >= 10000) {
         stats_at = now;
-        char line[400];
-        int o = snprintf(line, sizeof line, "coop: pos: w=%.2f sent %u (%u with gear);", wsec(), N.sent, N.sent_gear);
-        for (int id = 1; id <= COOP_MAX_MEMBERS && o < (int)sizeof line - 80; id++)
-            if (id != self && in_view[id])
-                o += snprintf(line + o, sizeof line - o, " member %d '%s': %u taken (%u with gear)%s%s", id, names[id],
-                              r[id].got, r[id].got_gear, shown >> id & 1 ? "" : ", not shown (not accepted or identified)",
-                              r[id].n ? "" : ", none yet");
+        char line[480];
+        int o = snprintf(line, sizeof line, "coop: puppet: w=%.2f sent %u PUPPET and %u GEAR;", wsec(), N.sent, N.sent_gear);
+        for (int s = 1; s <= COOP_PLAYERS && o < (int)sizeof line - 120; s++)
+            if (s != self && gen[s])
+                o += snprintf(line + o, sizeof line - o, " seat %d '%s': %u PUPPET and %u GEAR taken%s", s, names[s], r[s].got,
+                              r[s].got_gear, !r[s].n ? ", no pose yet"
+                              : r[s].gear_sig != r[s].pose[r[s].head].gear_sig ? ", its latest GEAR not here yet" : "");
         rt_log("%s", line);
     }
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
-        Puppet *p = &N.puppet[id];
-        CoopPos pose = {0};
-        int trusted = shown >> id & 1;
-        int heard = others && id != self && trusted && r[id].n && now - r[id].recv_ms[r[id].head] < SILENT_MS;
-        if (heard) remote_pose(&r[id], (uint32_t)now, &pose);
-        int here = heard && player && area[0] && (pose.flags & COOP_POS_IN_WORLD) && !strcmp(pose.area, area);
+    int alive = 0;
+    for (int s = 1; s <= COOP_PLAYERS; s++) {
+        Puppet *p = &N.puppet[s];
+        CoopPuppetMsg pose;
+        memset(&pose, 0, sizeof pose);
+        int heard = others && s != self && gen[s] && r[s].n && now - r[s].recv_ms[r[s].head] < SILENT_MS;
+        if (heard) remote_pose(&r[s], (uint32_t)now, &pose);
+        int here = heard && player && area[0] && (pose.flags & COOP_PUPPET_IN_WORLD) && !strcmp(pose.area, area);
         int scene = here && coop_cutscene_hides_puppets();   // no puppet stands in a story cutscene here
-        int want = here && !scene;
+        int want = here && !scene && P.remote && files > 0;
         char name[64] = "";
-        if (want) puppet_name(name, sizeof name, pose.flags & COOP_POS_ADULT);
-        if ((p->state == SP_ASKED || p->state == SP_FOLLOW) && (!want || strcmp(p->s.text, name))) {
-            rt_log("coop: puppet: member %d's puppet goes (%s)", id,
-                   !trusted ? "not accepted or not identified" : !heard ? "not heard" : scene ? "a cutscene plays here"
-                   : !want ? "not in this area" : "other age");
+        if (want) puppet_name(name, sizeof name, pose.flags & COOP_PUPPET_ADULT);
+        int held = p->state == SP_ASKED || p->state == SP_FOLLOW, other = held && N.puppet_gen[s] != gen[s];
+        if (held && (!want || other || strcmp(p->s.text, name))) {
+            rt_log("coop: puppet: seat %d's puppet goes (%s)", s,
+                   other ? "another player is in the seat" : !heard ? "not heard" : !here ? "not in this area"
+                   : scene ? "a cutscene plays here" : !P.remote ? "the puppets are off (NX2NAVI_COOP_PUPPETS=0)"
+                   : files <= 0 ? "the puppets' files are missing" : "other age");
             puppet_release(c, p);
         }
         if (want && p->state != SP_ASKED && p->state != SP_FOLLOW && (p->state == SP_WAIT || P.frames - p->asked_frame > 120)) {
             float pos[3], rot[9];
             memcpy(pos, pose.pos, sizeof pos);
             yaw_rot(pose.yaw, rot);
-            rt_log("coop: puppet: member %d is in %s: asking for %s", id, area, name);
+            rt_log("coop: puppet: seat %d '%s' is in %s: asking for %s", s, names[s], area, name);
             puppet_ask(c, p, name, pos, rot);
+            N.puppet_gen[s] = gen[s];
         }
         if (puppet_step(c, p)) {
             float rot[9];
             yaw_rot(pose.yaw, rot);
-            Pose anim = {.nslots = pose.nslots};
-            const CoopPos *newest = &r[id].pose[r[id].head];
-            for (int i = 0; i < pose.nslots && i < SLOTS; i++) {
+            Pose anim = {.nslots = pose.nslots < SLOTS ? pose.nslots : SLOTS};
+            const CoopPuppetMsg *newest = &r[s].pose[r[s].head];
+            for (int i = 0; i < anim.nslots; i++) {
                 snprintf(anim.node[i], sizeof anim.node[i], "%s", pose.slot[i].node);
                 anim.frame[i] = pose.slot[i].frame;
-                // POS v3: the sender's slots 1..3 that play nothing stay empty here, so that puppet_pose has the
-                // puppet's slot there play slot 0's node (the arms), whatever an older pose between them said
+                // the sender's slots 1..3 that play nothing stay empty here, so that puppet_pose has the puppet's slot
+                // there play slot 0's node (the arms), whatever an older pose between them said
                 if (i >= 1 && i <= 3 && newest->upper >> (i - 1) & 1) anim.node[i][0] = 0;
             }
-            if (newest->upper != N.logged_upper[id]) {
-                N.logged_upper[id] = newest->upper;
-                rt_log("coop: pos: w=%.2f member %d's upper slots: %s%s%s (slot 1 '%s')", wsec(), id,
-                       newest->upper & 1 ? "1 empty" : "1 plays", newest->upper & 2 ? ", 2 empty" : ", 2 plays",
-                       newest->upper & 4 ? ", 3 empty" : ", 3 plays", newest->slot[1].node);
+            if (newest->upper != N.logged_upper[s]) {
+                N.logged_upper[s] = newest->upper;
+                coop_ext_log(s, "puppet: w=%.2f seat %d's upper slots: %s%s%s (slot 1 '%s')", wsec(), s,
+                             newest->upper & 1 ? "1 empty" : "1 plays", newest->upper & 2 ? ", 2 empty" : ", 2 plays",
+                             newest->upper & 4 ? ", 3 empty" : ", 3 plays", newest->slot[1].node);
             }
             char who[24];
-            snprintf(who, sizeof who, "member %d", id);
-            puppet_pose(c, p, pose.pos, rot, &anim, 1);
-            if (r[id].gear_sig && r[id].gear_session == session[id]) {
-                if (r[id].gear_sig != N.logged_sig[id]) {
-                    N.logged_sig[id] = r[id].gear_sig;
-                    gear_log_line(who, "gear received", &r[id].gear, r[id].gear_sig);
+            snprintf(who, sizeof who, "seat %d", s);
+            puppet_pose(c, p, pose.pos, rot, &anim, s);
+            if (r[s].gear_sig) {
+                if (r[s].gear_sig != N.logged_sig[s]) {
+                    N.logged_sig[s] = r[s].gear_sig;
+                    gear_log_line(s, who, "gear received", &r[s].gear, r[s].gear_sig);
                 }
                 Gear g;
-                gear_from_pos(&r[id].gear, &g);
-                puppet_dress(c, p->actor, &g, who);
+                gear_from_msg(&r[s].gear, &g);
+                puppet_dress(c, s, p->actor, &g, who);
             }
             if ((P.frames - p->asked_frame) % 300 == 0) {
-                rt_log("coop: puppet: member %d's puppet at %.2f %.2f %.2f, slot 0 '%s' %.1f", id, pose.pos[0],
-                       pose.pos[1], pose.pos[2], anim.node[0], anim.frame[0]);
+                rt_log("coop: puppet: seat %d's puppet at %.2f %.2f %.2f, slot 0 '%s' %.1f", s, pose.pos[0], pose.pos[1],
+                       pose.pos[2], anim.node[0], anim.frame[0]);
                 log_slots(who, p->actor);
             }
         }
@@ -1677,8 +1721,8 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
     N.alive = alive;
 }
 
-// ---- colours: every Link's tunic and cap in his player's colour (green, red, blue, purple),
-// the local Link's own included,
+// ---- colours: every Link's tunic and cap in their player's colour (green, red, blue, purple), the local Link's own
+// included,
 // through the game's own per-material shader parameters.
 //
 // What draws a Link is the model set of his actor, f_7000974de0(actor): +0x20 s32 count, +0x28 pointers to entries
@@ -1703,8 +1747,9 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
 // aside for both (the controller's flash alpha, and a warp intensity that someone else changed), and is written every
 // frame otherwise, from the frame hook (the game's update thread, before the scene update).
 //
-// NX2NAVI_COOP_COLOUR_SELF=<green|red|blue|purple>  the local Link's colour (test: there is no room colour
-//     assignment yet; unset: none). Members' puppets take CL.member[id], none until the room assigns colours.
+// In a room the Links show the room's colours (coop_colours.c): this Link coop_colours_self, each puppet its seat's.
+// NX2NAVI_COOP_COLOUR_SELF=<green|red|blue|purple>  the local Link's colour outside a room or with room colours off
+//     (test; unset: none).
 // NX2NAVI_COOP_COLOUR_TEST=<colour>  the shadow puppet's colour (NX2NAVI_COOP_PUPPET_TEST=shadow).
 // NX2NAVI_COOP_COLOUR_STRENGTH  the glow's intensity (default 0.03), NX2NAVI_COOP_COLOUR_DARK  how much the fabric is
 //     darkened under it (0..1, default 0.8; the Goron and Zora tunics at least 0.92; 0 darkens nothing).
@@ -1774,12 +1819,12 @@ static struct {
     _Atomic int self;                    // colours: the local Link (the room's assignment in a room, else self_env)
     int test;                            // the shadow puppet
     int self_env;                        // NX2NAVI_COOP_COLOUR_SELF (test: the local Link outside a room)
-    int member[COOP_MAX_MEMBERS + 1];    // a member's puppet: the room's assignment (section "room colours")
+    int seat[COOP_PLAYERS + 1];          // each seat's puppet: the room's colour for that seat (coop_colours_seat)
     int param, native, diag;   // diag: test, NX2NAVI_COOP_COLOUR_DIAG=1 logs the parameters' values
     float strength, dark;
     _Atomic int dirty;                   // units still carry a colour (the hook stays on to take it away)
     uint32_t frames, writes, skips, yields;
-} CL = {.self = COL_NONE, .test = COL_NONE, .self_env = COL_NONE, .member = {[0 ... COOP_MAX_MEMBERS] = COL_NONE},
+} CL = {.self = COL_NONE, .test = COL_NONE, .self_env = COL_NONE, .seat = {[0 ... COOP_PLAYERS] = COL_NONE},
         .param = CP_WARP, .strength = 0.03f, .dark = 0.8f};
 
 // A model unit looked at: its tunic materials and their parameters, and what it carries now.
@@ -2182,20 +2227,26 @@ static void colour_link(Cpu *c, uint64_t actor, int colour, const char *who, int
     }
 }
 
+// The colours of this frame: in a room with room colours on, the room's (coop_colours.c), else the test colour.
+static int colour_own(void) { return N.in_room && coop_colours_on() ? coop_colours_self() : CL.self_env; }
+
 static void colour_frame(Cpu *c, uint64_t player) {
+    int room = N.in_room && coop_colours_on();
+    CL.self = colour_own();
+    for (int s = 1; s <= COOP_PLAYERS; s++) CL.seat[s] = room ? coop_colours_seat(s) : COL_NONE;
     if (CL.self == COL_NONE && CL.test == COL_NONE && !CL.dirty) {
         int any = 0;
-        for (int id = 1; id <= COOP_MAX_MEMBERS; id++) any |= CL.member[id] != COL_NONE;
+        for (int s = 1; s <= COOP_PLAYERS; s++) any |= CL.seat[s] != COL_NONE;
         if (!any) return;
     }
     CL.frames++;
     if (player) colour_link(c, player, CL.self, "Link", 0);
     if (P.test == 2 && shadow_p.state == SP_FOLLOW && puppet_alive(&shadow_p)) colour_link(c, shadow_p.actor, CL.test, "shadow", 1);
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
-        Puppet *p = &N.puppet[id];
+    for (int s = 1; s <= COOP_PLAYERS; s++) {
+        Puppet *p = &N.puppet[s];
         char who[16];
-        snprintf(who, sizeof who, "member %d", id);
-        if (p->state == SP_FOLLOW && puppet_alive(p)) colour_link(c, p->actor, CL.member[id], who, -1);
+        snprintf(who, sizeof who, "seat %d", s);
+        if (p->state == SP_FOLLOW && puppet_alive(p)) colour_link(c, p->actor, CL.seat[s], who, -1);
     }
     int dirty = 0;
     for (int k = 0; k < UNITS; k++) dirty |= ucol[k].colour != COL_NONE && CL.frames - ucol[k].used < 600;
@@ -2210,9 +2261,9 @@ static void colour_frame(Cpu *c, uint64_t player) {
 
 static void colour_cfg(void) {
     CL.self_env = col_parse(cfg_get("NX2NAVI_COOP_COLOUR_SELF"), "NX2NAVI_COOP_COLOUR_SELF");
-    CL.self = CL.self_env;   // in a room, the room's assignment replaces it (room_colours)
+    CL.self = CL.self_env;   // in a room, the room's colours replace it (colour_frame)
     CL.test = col_parse(cfg_get("NX2NAVI_COOP_COLOUR_TEST"), "NX2NAVI_COOP_COLOUR_TEST");
-    for (int id = 0; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = COL_NONE;   // the room's assignment: not yet
+    for (int s = 0; s <= COOP_PLAYERS; s++) CL.seat[s] = COL_NONE;   // the room's colours: read every frame
     const char *pm = cfg_get("NX2NAVI_COOP_COLOUR_PARAM");
     CL.param = pm && !strcmp(pm, "blend") ? CP_BLEND : pm && !strcmp(pm, "body") ? CP_BODY
              : pm && !strcmp(pm, "none") ? CP_NONE : pm && !strcmp(pm, "petrify") ? CP_PETRIFY : CP_WARP;
@@ -2240,139 +2291,18 @@ static void colour_cfg(void) {
                col_rgb[3][0], col_rgb[3][1], col_rgb[3][2]);
 }
 
-// ---- room colours: every member of a room has a colour of its own (green,
-// red, blue, purple), and every game shows the same. Each member's POS carries its place in the room's join order (one
-// more than the highest place it heard from the members already in the room when it joined; it waits up to 1.5 s to
-// hear them all), the colour it picked (NX2NAVI_COOP_COLOUR=green|red|blue|purple; unset or auto: none) and the colour
-// it shows now. Every game runs the same assignment over the members it hears, in join order (place, then member id
-// for two that joined at the same moment; a member whose place is not known yet comes last): a member gets the colour
-// it picked if no earlier member has it, else the colour it shows now if no earlier member has that (a colour once
-// given stays), else the first free one in the order green, red, blue, purple. So of two members that want one
-// colour the earlier joiner keeps it, and a member that picked none gets the first free colour in join order. The
-// local Link and each member's puppet show the result (colour_frame). A member that sends no POS (puppets off) takes
-// part in nothing. NX2NAVI_COOP_COLOURS=0 turns room colours off; they are on with NX2NAVI_COOP_PUPPETS, since the
-// POS that carries them goes only then. Outside a room the test colour NX2NAVI_COOP_COLOUR_SELF applies again.
-
-#define PLACE_WAIT_MS 1500
-static struct {
-    int on;                 // NX2NAVI_COOP_COLOURS (default: with NX2NAVI_COOP_PUPPETS)
-    int want;               // NX2NAVI_COOP_COLOUR: COL_NONE (none picked) or a colour
-    // the game thread's
-    unsigned epoch;         // the N.epoch this place belongs to
-    int place;              // this player's place in the room's join order, 0 until known
-    _Atomic int colour;     // this player's colour now (what its POS says it shows)
-    int shown[COOP_MAX_MEMBERS + 1];   // the assignment logged last
-} RC = {.want = COL_NONE, .colour = COL_NONE, .shown = {[0 ... COOP_MAX_MEMBERS] = COL_NONE}};
-
-static uint8_t room_colour_byte(void) {
-    int c = RC.colour;
-    return c >= 0 && c < COL_N ? (uint8_t)c : COOP_COLOUR_NONE;
-}
-static uint8_t room_want_byte(void) { return RC.on && RC.want >= 0 && RC.want < COL_N ? (uint8_t)RC.want : COOP_COLOUR_NONE; }
-static uint16_t room_place(void) { return RC.on ? (uint16_t)RC.place : 0; }
-
-enum { WHY_PICKED, WHY_KEPT, WHY_FIRST_FREE, WHY_NONE_FREE };
-static const char *const why_text[] = {"picked", "kept", "first free", "none free"};
-
-typedef struct { int id, place, want, colour; } RoomMember;
-
-// The assignment, the same in every game for the same members: m is sorted into join order, out[id] and why[id] set.
-static void room_assign(RoomMember *m, int n, int *out, int *why) {
-    for (int i = 1; i < n; i++)
-        for (int k = i; k > 0; k--) {
-            unsigned ka = (m[k - 1].place ? (unsigned)m[k - 1].place : 0x10000u) * 16u + (unsigned)m[k - 1].id;
-            unsigned kb = (m[k].place ? (unsigned)m[k].place : 0x10000u) * 16u + (unsigned)m[k].id;
-            if (ka <= kb) break;
-            RoomMember t = m[k];
-            m[k] = m[k - 1], m[k - 1] = t;
-        }
-    int taken[COL_N] = {0};
-    for (int i = 0; i < n; i++) {
-        int c = COL_NONE, w = WHY_NONE_FREE;
-        if (m[i].want >= 0 && m[i].want < COL_N && !taken[m[i].want]) c = m[i].want, w = WHY_PICKED;
-        else if (m[i].colour >= 0 && m[i].colour < COL_N && !taken[m[i].colour]) c = m[i].colour, w = WHY_KEPT;
-        else
-            for (int k = 0; k < COL_N && c == COL_NONE; k++)
-                if (!taken[k]) c = k, w = WHY_FIRST_FREE;
-        if (c != COL_NONE) taken[c] = 1;
-        out[m[i].id] = c, why[m[i].id] = w;
-    }
-}
-
-static void room_colours(const Remote *r, const uint64_t *session, const int *in_view, char (*names)[COOP_NAME_MAX + 1],
-                         uint64_t now) {
-    int self = N.self;
-    unsigned epoch = N.epoch;
-    if (epoch != RC.epoch) {   // a new room, or none: the place is found again and the colours given again
-        RC.epoch = epoch, RC.place = 0, RC.colour = COL_NONE;
-        for (int id = 0; id <= COOP_MAX_MEMBERS; id++) RC.shown[id] = COL_NONE;
-    }
-    if (!RC.on || !N.in_room || self < 1 || self > COOP_MAX_MEMBERS) {
-        if (RC.colour != COL_NONE || CL.self != CL.self_env) rt_log("coop: colour: w=%.2f out of the room's colours", wsec());
-        CL.self = CL.self_env, RC.colour = COL_NONE;
-        for (int id = 0; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = COL_NONE;
-        return;
-    }
-    // the other members the view lists whose POS came in their current session
-    int heard[COOP_MAX_MEMBERS + 1] = {0}, all = 1, top = 0;
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
-        if (id == self || !in_view[id]) continue;
-        heard[id] = r[id].n > 0 && r[id].seen.session == session[id];
-        if (!heard[id]) {
-            all = 0;
-            continue;
-        }
-        int pl = r[id].pose[r[id].head].place;
-        if (pl > top) top = pl;
-    }
-    if (!RC.place && (all || now - N.epoch_ms > PLACE_WAIT_MS)) {
-        RC.place = top < 65535 ? top + 1 : 65535;
-        rt_log("coop: colour: w=%.2f this player (member %d '%s') is number %d in the room's join order (%s)", wsec(),
-               self, names[self], RC.place, all ? "heard every other member" : "1.5 s without hearing every other member");
-    }
-    RoomMember m[COOP_MAX_MEMBERS + 1];
-    int n = 0;
-    m[n++] = (RoomMember){self, RC.place, RC.want, RC.colour};
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++)
-        if (heard[id]) {
-            const CoopPos *p = &r[id].pose[r[id].head];
-            m[n++] = (RoomMember){id, p->place, p->want < COL_N ? p->want : COL_NONE, p->colour < COL_N ? p->colour : COL_NONE};
-        }
-    int out[COOP_MAX_MEMBERS + 1], why[COOP_MAX_MEMBERS + 1];
-    for (int id = 0; id <= COOP_MAX_MEMBERS; id++) out[id] = COL_NONE, why[id] = WHY_NONE_FREE;
-    room_assign(m, n, out, why);
-    int changed = 0;
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) changed |= out[id] != RC.shown[id];
-    if (changed) {
-        char line[900];
-        int o = snprintf(line, sizeof line, "coop: colour: w=%.2f room colours in join order:", wsec());
-        for (int i = 0; i < n && o < (int)sizeof line - 160; i++) {
-            int id = m[i].id, w = m[i].want;
-            o += snprintf(line + o, sizeof line - o, "%s member %d '%s'%s place %d: %s (%s%s%s)", i ? ";" : "", id,
-                          names[id], id == self ? " (this player)" : "", m[i].place, out[id] >= 0 ? col_name[out[id]] : "none",
-                          why_text[why[id]], w >= 0 && out[id] != w ? "; it picked " : "", w >= 0 && out[id] != w ? col_name[w] : "");
-        }
-        rt_log("%s", line);
-        for (int id = 0; id <= COOP_MAX_MEMBERS; id++) RC.shown[id] = out[id];
-    }
-    RC.colour = out[self];
-    CL.self = out[self];
-    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = id == self ? COL_NONE : out[id];
-}
-
-// ---- name tags (coop_tags.h): where the shown players' Links stand, for
-// the overlay that writes each one's name above his head (ui/coop_tags_view.cpp). Read at the start of the hook, before
-// this frame's poses move the puppets, so Link and the puppets are where the frame just drawn had them. Each anchor
-// carries its player's name and room colour (the same CL.member the tunics show). The local Link's position goes with
-// them: the overlay draws only through a camera near him, so a menu's model camera (the pause screen's item view) or a
-// far event camera shows no tags. NX2NAVI_COOP_TAGS=0 publishes nothing; NX2NAVI_COOP_TAGS_TEST also tags the local
-// Link and the shadow puppet.
+// ---- name tags (coop_tags.h): where the shown players' Links stand, for the overlay that writes each one's name above
+// their head (ui/coop_tags_view.cpp). Read at the start of the hook, before this frame's poses move the puppets, so
+// Link and the puppets are where the frame just drawn had them. Each anchor carries its player's seat, name (as the room
+// has it) and room colour (the same CL.seat the tunics show). The local Link's position goes with them: the overlay
+// draws only through a camera near him, so a menu's model camera (the pause screen's item view) or a far event camera
+// shows no tags. NX2NAVI_COOP_TAGS_TEST also tags the local Link and the shadow puppet.
 
 static void tags_publish(uint64_t player) {
     CoopTagsCfg tc;
     coop_tags_cfg(&tc);
     if (!tc.on) return;
-    static char names[COOP_MAX_MEMBERS + 1][COOP_NAME_MAX + 1];
+    static char names[COOP_PLAYERS + 1][COOP_NAME_CAP];
     static CoopTagFrame f;
     int self = N.self;
     plat_mutex_lock(&N.lock);
@@ -2382,19 +2312,19 @@ static void tags_publish(uint64_t player) {
     int n = 0;
     f.link_ok = player && LD32(player + A_STATE) == 4;
     if (f.link_ok) memcpy(f.link_pos, (const void *)(uintptr_t)(player + A_POS), 12);
-    for (int id = 1; id <= COOP_MAX_MEMBERS && n < COOP_TAG_MAX; id++) {
-        Puppet *p = &N.puppet[id];
-        if (id == self || p->state != SP_FOLLOW || !puppet_alive(p) || LD32(p->actor + A_STATE) != 4) continue;
-        a[n] = (CoopTagAnchor){.kind = COOP_TAG_MEMBER, .member = (uint8_t)id, .adult = strstr(p->s.text, "Adult") != NULL,
-                               .colour = (int8_t)CL.member[id]};
+    for (int s = 1; s <= COOP_PLAYERS && n < COOP_TAG_MAX; s++) {
+        Puppet *p = &N.puppet[s];
+        if (s == self || p->state != SP_FOLLOW || !puppet_alive(p) || LD32(p->actor + A_STATE) != 4) continue;
+        a[n] = (CoopTagAnchor){.kind = COOP_TAG_SEAT, .seat = (uint8_t)s, .adult = strstr(p->s.text, "Adult") != NULL,
+                               .colour = (int8_t)CL.seat[s]};
         memcpy(a[n].pos, (const void *)(uintptr_t)(p->actor + A_POS), 12);
-        snprintf(a[n].name, sizeof a[n].name, "%s", names[id]);
+        snprintf(a[n].name, sizeof a[n].name, "%s", names[s]);
         n++;
     }
     if (tc.test && player && n < COOP_TAG_MAX) {
         a[n] = (CoopTagAnchor){.kind = COOP_TAG_TEST_LINK, .adult = (uint8_t)is_adult(player), .colour = (int8_t)CL.self};
         memcpy(a[n].pos, (const void *)(uintptr_t)(player + A_POS), 12);
-        snprintf(a[n].name, sizeof a[n].name, "%s", self >= 1 && self <= COOP_MAX_MEMBERS && names[self][0] ? names[self] : "Link");
+        snprintf(a[n].name, sizeof a[n].name, "%s", self >= 1 && self <= COOP_PLAYERS && names[self][0] ? names[self] : "Link");
         n++;
         if (P.test == 2 && shadow_p.state == SP_FOLLOW && puppet_alive(&shadow_p) && LD32(shadow_p.actor + A_STATE) == 4 &&
             n < COOP_TAG_MAX) {
@@ -2448,9 +2378,8 @@ static void puppet_frame(Cpu *c) {
     }
     coop_kill_frame(c, player, area);   // kills, shared damage, difficulty (coop_kill.c): the area and Link's life component
     coop_cutscene_frame(c, player, area);   // cutscenes together (coop_cutscene.c): the event manager, leader and follower
-    // the other players (and, in a room, the room's colours: the local Link's too, even alone in it); once more after
-    // leaving a room, to take its colours away
-    if ((P.remote && (N.others || N.in_room)) || N.alive || RC.colour != COL_NONE) remotes(c, player, area);
+    // the other players: their puppets, and this Link's PUPPET and GEAR while others are in the room
+    if (N.others || N.alive) remotes(c, player, area);
     colour_frame(c, player);
 }
 
@@ -2481,18 +2410,6 @@ void coop_puppet_present(void) {
         rt_log("coop: puppet: gear %d (drawn %d, mask %#x%s%s), blackboard copy %d", gear_mode, gear_drawn, gear_mask,
                gear_test[0] ? ", test gear " : "", gear_test, P.bb_copy);
         colour_cfg();
-        // room colours, this player's pick, and the gear in POS v3
-        const char *rcv = cfg_get("NX2NAVI_COOP_COLOURS");   // on with the puppets unless "0"
-        RC.on = P.remote && !(rcv && !strcmp(rcv, "0"));
-        const char *pick = cfg_get("NX2NAVI_COOP_COLOUR");   // green, red, blue, purple; unset or auto: the first free
-        RC.want = pick && *pick && strcmp(pick, "auto") ? col_parse(pick, "NX2NAVI_COOP_COLOUR") : COL_NONE;
-        const char *pg = cfg_get("NX2NAVI_COOP_POS_GEAR");   // the gear in POS: on unless "0"
-        N.pos_gear = !(pg && !strcmp(pg, "0"));
-        if (P.remote)
-            rt_log("coop: colour: room colours %s (NX2NAVI_COOP_COLOURS='%s'); this player picks %s (NX2NAVI_COOP_COLOUR='%s'); "
-                   "POS version %d, gear in it %s (NX2NAVI_COOP_POS_GEAR='%s')", RC.on ? "on" : "off", rcv ? rcv : "",
-                   RC.want != COL_NONE ? col_name[RC.want] : "none (the first free colour)", pick ? pick : "",
-                   COOP_POS_VERSION, N.pos_gear ? "on" : "off", pg ? pg : "");
         if (P.test == 1 && t[5] == ':') {
             char a[64] = "", b[64] = "";
             if (sscanf(t + 6, "%63[^:]:%63s", a, b) >= 1 && a[0]) snprintf(spike_names[0], sizeof spike_names[0], "%s", a);
@@ -2506,14 +2423,22 @@ void coop_puppet_present(void) {
             P.side = side;
         }
     }
-    // on while there are others in the room to show (NX2NAVI_COOP_PUPPETS) or puppets to remove, or the local Link
-    // has a colour (or still carries one), or this player is in a room with room colours; off (the original call)
-    // otherwise
+    if (N.files < 0) {   // once: the puppets' actor packs, which the Co-op puppets mod adds
+        int ok = 1;
+        for (int i = 0; i < 2; i++)
+            if (!romfs_has(puppet_packs[i])) {
+                ok = 0;
+                rt_log("coop: puppet: the game's files have no %s (the Co-op puppets mod is missing or switched off): "
+                       "no other player's Link is shown, nor their name above it", puppet_packs[i]);
+            }
+        N.files = ok;
+    }
+    // on while others are in the room (their puppets, this Link's PUPPET and GEAR) or puppets are to be removed, or the
+    // local Link has a colour (or still carries one); off (the original call) otherwise
     // ... and while kills, shared damage or difficulty need the area and Link from it (coop_kill.c)
     int kills = coop_kill_present();
     int cuts = coop_cutscene_present();   // ... and while cutscenes together have a room with others (or a test)
-    int want = P.test != 0 || (P.remote && N.others) || N.alive || CL.self != COL_NONE || CL.dirty ||
-               (RC.on && N.in_room) || RC.colour != COL_NONE || kills || cuts;
+    int want = P.test != 0 || N.others || N.alive || colour_own() != COL_NONE || CL.dirty || kills || cuts;
     if (want != P.want) {
         P.want = want;
         rt_patch_switch(P.set, want);
@@ -2523,10 +2448,10 @@ void coop_puppet_present(void) {
 
 void coop_puppet_init(void) {
     plat_mutex_init(&N.lock);
-    N.pos_gear = 1;
     if (P.set < 0) return;
-    coop_on_message(COOP_K_POS, on_pos, NULL);
-    coop_on_view(on_view, NULL);
+    coop_ext_on_message(COOP_K_PUPPET, on_puppet, NULL);
+    coop_ext_on_message(COOP_K_GEAR, on_gear, NULL);
+    coop_ext_on_view(on_view, NULL);
     coop_kill_init();   // kills, shared damage, difficulty (coop_kill.c): its messages and hooks on the co-op thread
     coop_cutscene_init();   // cutscenes together (coop_cutscene.c): its message and hooks on the co-op thread
 }
@@ -2540,7 +2465,7 @@ __attribute__((constructor)) static void puppet_register(void) {
 #else
 void coop_puppet_present(void) {}
 void coop_puppet_init(void) {}
-int coop_puppet_world_others(void) { return -1; }
+int coop_puppet_world_others(void) { return 0; }
 int coop_puppet_area_others(const char *area) {
     (void)area;
     return 0;

@@ -1,4 +1,4 @@
-// Co-op name tags: each other player's name above his Link, in his player
+// Co-op name tags: each other player's name above their Link, in their player
 // colour, over the game's picture. The anchors come from the game thread (coop_tags.h, published by coop_puppet.c's
 // frame hook), the camera is the one that drew the presented frame (vk_scenecam.h). A world point goes to clip space
 // as P [V; 0 0 0 1] (x, y, z, 1), to NDC (+y the top of the picture: the replay's viewports have negative heights),
@@ -30,7 +30,7 @@ void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #define MIN_DRAWS 20       // scene draws of the camera's block in the frame (the game's view: hundreds)
 #define MAX_EYE_M 40.0f    // the camera's eye from the local Link
 
-// The players' colours as text (sRGB): green, red, blue, purple (coop_puppet.c COL_*); none: a warm white
+// The players' colours as text (sRGB): green, red, blue, purple (coop_colours.h); none: a warm white
 static const ImU32 kColour[4] = {IM_COL32(91, 227, 107, 255), IM_COL32(255, 92, 92, 255), IM_COL32(96, 165, 255, 255),
                                  IM_COL32(200, 128, 255, 255)};
 static const ImU32 kNone = IM_COL32(245, 240, 225, 255);
@@ -130,7 +130,7 @@ static const char *tag_name(const CoopTagAnchor *a, char *buf, size_t cap) {
     if (a->name[0]) return a->name;
     if (a->kind == COOP_TAG_TEST_LINK) return "Link";
     if (a->kind == COOP_TAG_TEST_SHADOW) return "Shadow";
-    snprintf(buf, cap, "Player %d", a->member);
+    snprintf(buf, cap, "Player %d", a->seat);
     return buf;
 }
 
@@ -238,7 +238,7 @@ void coop_tags_draw(const MenuTarget *t, float scale) {
         dl->AddTriangleFilled(t0v, t1v, t2v, col);
         if (log) {
             char who[24];
-            if (a->kind == COOP_TAG_MEMBER) snprintf(who, sizeof who, "member %d", a->member);
+            if (a->kind == COOP_TAG_SEAT) snprintf(who, sizeof who, "seat %d", a->seat);
             else snprintf(who, sizeof who, "%s", a->kind == COOP_TAG_TEST_LINK ? "Link" : "shadow");
             rt_log("coop: tags:   '%s' (%s, %s, %s) at %.2f %.2f %.2f: depth %.2f m, ndc %+.3f %+.3f, px %.0f %.0f, size "
                    "%.1f, alpha %.2f", name, who, a->adult ? "adult" : "child",

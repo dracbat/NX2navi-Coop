@@ -19,12 +19,12 @@
 #include "coop.h"   // COOP_NAME_CAP
 
 enum { COOP_TAG_MAX = 10 };
-enum { COOP_TAG_MEMBER, COOP_TAG_TEST_LINK, COOP_TAG_TEST_SHADOW };
+enum { COOP_TAG_SEAT, COOP_TAG_TEST_LINK, COOP_TAG_TEST_SHADOW };
 typedef struct {
     uint8_t kind;                    // COOP_TAG_*
-    uint8_t member;                  // COOP_TAG_MEMBER: the member id
+    uint8_t seat;                    // COOP_TAG_SEAT: the player's seat (coop_ext.h)
     uint8_t adult;                   // the Link is an adult (the head height)
-    int8_t colour;                   // 0 green, 1 red, 2 blue, 3 purple (coop_puppet.c COL_*); -1 none
+    int8_t colour;                   // 0 green, 1 red, 2 blue, 3 purple (coop_colours.h); -1 none
     float pos[3];                    // the actor's origin (+0x31c), metres
     char name[COOP_NAME_CAP];        // cleaned UTF-8, as the room has it (coop.h); "" when unknown
 } CoopTagAnchor;
