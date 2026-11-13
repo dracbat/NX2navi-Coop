@@ -483,11 +483,13 @@ repository keeps old package files, so a release keeps building with the compile
 of `launcher/brand.py` (`NX2navi-Coop-Setup-<version>.exe`, `NX2navi-Coop-app-<version>.zip`,
 `NX2navi-Coop-runtime-<id>.zip`, `NX2navi-Coop-update.json`). A version has four numbers, the upstream release it
 is made from and a build number (`0.9.2.1`): a `-tag` would sort before its base and reach only the Preview
-channel. The parts it does not change (the shader translator, AMD's and NVIDIA's libraries, `nx2navi_dlssg.dll`,
-the button art, the pipeline list and the toolchain lock) come from that upstream release's app archive, checked
-against its manifest by `tools/coop_base_inputs.py`, which also seeds the generated runtime headers. Pushing the
-tag `v<VERSION>` builds the release and leaves it as a draft pre-release; publishing it as a pre-release reaches
-the Preview channel first, and as a release every launcher.
+channel. The code is the tagged commit's, NX2navi's main as last merged into it plus NX2navi Co-op; the parts it does
+not change (the shader translator, AMD's and NVIDIA's libraries, `nx2navi_dlssg.dll`, the button art, the pipeline
+list and the toolchain lock) come from that upstream release's app archive, checked against its manifest by
+`tools/coop_base_inputs.py`, which also seeds the generated runtime headers. They fit a main newer than that release
+while main has changed none of what they are made from (the workflow's header comment lists it). Pushing the tag
+`v<VERSION>` builds the release and leaves it as a draft pre-release; publishing it as a pre-release reaches the
+Preview channel first, and as a release every launcher.
 
 ## Tests
 
