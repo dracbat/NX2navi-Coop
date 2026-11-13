@@ -641,26 +641,31 @@
 # Co-op, experimental: play with friends over Steam, each in their own game and save (docs/coop.md). The game signs in
 # to Steam as its test app, so Steam shows you as playing Spacewar; it needs Steam running and Steam's library file
 # steam_api64.dll beside ocarina.exe, which the launcher copies there from a Steam game you have installed. Rooms are
-# made and joined in the menu's Co-op tab, never from this file.
+# made and joined in the menu's Co-op tab, never from this file. Everyone in a room needs the same version of NX2navi
+# Co-op: a game of the official NX2navi cannot join its rooms.
 # 0 = off, the game uses no network. Takes effect at once.
 # coop_steam = 0
 # In a room, share progress, items and songs with the other players; your save is copied to coop-backup in the profile
-# folder first. 0 = only names, positions and chat.
+# folder first. 0 = no progress and no shared small keys; the rest below still goes.
 # coop_share = 1
 # Small keys in a room with coop_share on: pool, one count per dungeon for the whole room, kept by the room's host (a key
 # anyone picks up is everyone's, and a locked door anyone opens uses up a key for everyone); own, each player's own.
 # coop_keys = pool
-# Show the other players' names where their Link stands (needs DLSS, FSR or TAA on).
+# Show each other player's name above their Link, in their colour (needs coop_puppets on).
 # coop_names = 1
 # Show new chat lines, and who joined or left, over the game while the menu is closed.
 # coop_chat = 1
-# NX2navi Co-op's own (docs/coop.md, "NX2navi Co-op"); no menu rows, and everyone in a room should use the same.
-# The other players as Links of their own, in their gear, made from the files the launcher makes (0 = not shown).
-# coop_puppets = 1
-# Your colour: green, red, blue or purple; auto takes the first one free in the room. Of two players who pick the same,
-# the one who joined first keeps it. coop_colours = 0 shows no room colours.
+# Your colour, the Co-op tab's Your colour: auto, green, red, blue or purple. The room's host gives each player a colour
+# no other player has: the one picked when it is free, else the first free one (the host green, the next player red);
+# of two players who pick the same, the one who joined first keeps it. coop_colours = 0 shows no room colours.
 # coop_colour = auto
 # coop_colours = 1
+# The rest of NX2navi Co-op's settings have no menu rows (docs/coop.md, "Playing together"). Everyone in a room should
+# use the same, and coop_dialog and coop_era = shared must match: games that differ in them share no progress.
+# The other players as Links of their own, in their gear (coop_puppet_gear = 0: without it), made from the Co-op
+# puppets mod the launcher makes. 0 = not shown in your game; yours is still shown in theirs.
+# coop_puppets = 1
+# coop_puppet_gear = 1
 # A placed enemy one player kills dies in every world of that area (coop_kills), and each player's hits on it count in
 # every world (coop_damage). A boss keeps its killing blow in each world: lethal shares that too, 0 shares nothing.
 # coop_kills = 1
@@ -670,13 +675,18 @@
 # coop_scale = 1
 # coop_scale_hp = 1,1.5,2,2.5
 # coop_scale_taken = 1,1.25,1.5,1.75
-# A story cutscene one player starts plays in every game (0 = off); back returns you to where you were afterwards.
+# A story cutscene one player starts plays in every game of the same age (0 = off): a player in another area is
+# teleported to it and stays there, or with back returns to where they were afterwards. Boss scenes: area, only
+# players already in that area follow them; all; or 0.
 # coop_cutscenes = 1
 # coop_cutscene_return = stay
-# Talks with NPCs stay each player's own (shared: as in NX2navi), the time of day is the room's (0 = each player's), and
-# the era follows the players: follow, scene (no teleport), own, or shared (as in NX2navi: child to adult only).
+# coop_cutscene_bosses = area
+# Talks with NPCs stay each player's own (shared: as in NX2navi), and the time of day is the room's (0 = each player's).
 # coop_dialog = own
 # coop_time = 1
+# The era follows the players: follow, a player of the other era (one who joins in it too) plays the scene that changed
+# it or is teleported into an area of the room's era; scene, the scene only, no teleport; own, each player's own;
+# shared, as in NX2navi (child to adult only). coop_cutscenes = 0 with coop_era = scene keeps you where you are.
 # coop_era = follow
 
 [audio]
