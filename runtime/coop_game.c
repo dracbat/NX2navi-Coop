@@ -220,6 +220,8 @@ static struct {
 static volatile int32_t hold, running, save_serial;
 // For the small keys (coop_keys.c): moves at each load the gate sees and with save_serial.
 static volatile int32_t load_serial;
+// For the puppets and the time of day: the gate opened since the title screen last came back (coop_game_played).
+static volatile int32_t played;
 
 static int rd_ok(uint64_t a, uint64_t n) { return a >= 0x1000 && mem_readable(a, n); }
 
@@ -422,6 +424,7 @@ void coop_game_hold(int on) { __atomic_store_n(&hold, on != 0, __ATOMIC_RELEASE)
 int coop_game_running(void) { return __atomic_load_n(&running, __ATOMIC_ACQUIRE); }
 unsigned coop_game_save_serial(void) { return (unsigned)__atomic_load_n(&save_serial, __ATOMIC_ACQUIRE); }
 unsigned coop_game_load_serial(void) { return (unsigned)__atomic_load_n(&load_serial, __ATOMIC_ACQUIRE); }
+int coop_game_played(void) { return __atomic_load_n(&played, __ATOMIC_ACQUIRE); }
 int coop_game_backed_up(void) { return __atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE); }
 
 void coop_game_rom_open(const char *path) {
@@ -544,6 +547,7 @@ static int gate(uint64_t mgr, float pos[3]) {
         G.titles = titles;
         unbind();
         G.loaded = 0;
+        __atomic_store_n(&played, 0, __ATOMIC_RELEASE);
         __atomic_add_fetch(&save_serial, 1, __ATOMIC_RELEASE);
         __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
     }
@@ -569,6 +573,7 @@ static int gate(uint64_t mgr, float pos[3]) {
     G.player = player_in_world(pos);
     G.gate = G.loaded && G.player && !loading && !moving && G.clock_at && now - G.clock_at < CLOCK_MS;
     __atomic_store_n(&running, G.gate, __ATOMIC_RELEASE);
+    if (G.gate) __atomic_store_n(&played, 1, __ATOMIC_RELEASE);
     return G.gate;
 }
 
