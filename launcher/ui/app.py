@@ -930,6 +930,15 @@ class App:
         if not path:
             return
         p = Path(path)
+        kit = build.build_state(p).get('kit', '') if (p / 'build-cache').is_dir() else ''
+        if kit and not brand.own_version(kit):
+            # another program's game (the official NX2navi's, built with a three-number version): building into it
+            # would replace that game and play its save, and a folder of ours made inside it would be removed with
+            # that game by the other program's uninstall
+            self.message = (f'{p} holds the game the official NX2navi built (version {versions.display(kit)}). '
+                            f'Choose another folder: {NAME} builds and plays a game of its own, with its own save.')
+            self.render()
+            return
         if (p.exists() and any(p.iterdir()) and not (p / 'build-cache').is_dir()
                 and p.name.lower() != brand.FOLDER.lower()):
             p = p / brand.FOLDER

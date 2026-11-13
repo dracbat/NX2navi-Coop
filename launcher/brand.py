@@ -2,6 +2,7 @@
 update and run side by side, each with its own folder, programs, Apps entry, shortcuts, taskbar button, Steam
 shortcut and releases. launcher/native/brand.h holds the same names for the setup and the launcher's own program,
 runtime/brand.h the game window's title, and tools/make_launcher.py names the release's files after these."""
+import re
 
 NAME = 'NX2navi Co-op'                 # the launcher's window and messages, the Apps entry, the shortcuts
 FOLDER = 'NX2navi-Coop'                # %LOCALAPPDATA%\Programs\<FOLDER>, C:\<FOLDER>\toolchain, <drive>\Games\<FOLDER>
@@ -15,3 +16,11 @@ MANIFEST = f'{ASSET_PREFIX}-update.json'   # the manifest a release carries; the
 #                                            neither launcher ever takes the other's releases
 STEAM_NAME = 'Ocarina of Time Co-op'   # the Steam shortcut's name (launcher/steam.py): the official one keeps its own
 STEAM_BACKUP = 'shortcuts.vdf.nx2navi-coop-backup'   # the copy of Steam's shortcuts file made before the first change
+
+
+def own_version(text):
+    """True for a version of NX2navi Co-op: four numbers, the upstream release it is made from and a build number
+    (0.9.2.1), with or without a pre-release tag or build metadata. The official NX2navi's versions have three, so a
+    game folder's build state (build.build_state 'kit') tells which program built the game in it."""
+    m = re.match(r'v?(\d+(?:\.\d+)*)(?:[-+]|$)', (text or '').strip())
+    return bool(m) and m.group(1).count('.') == 3

@@ -4868,6 +4868,39 @@ def mock_app(test, game):
     return App, a
 
 
+class ChooseFolderTest(Tmp):
+    def test_a_game_folder_of_the_official_launcher_is_refused(self):
+        """Choose the folder for the game refuses a folder whose game another program built (a version of three
+        numbers in its build state: the official NX2navi's), so that the two never build into or play one game folder
+        and save; a folder NX2navi Co-op built, one without a build and an empty one are taken as before."""
+        from launcher import brand
+        App, a = mock_app(self, self.tmp / 'game')
+
+        def pick(folder, kit=None):
+            folder.mkdir(parents=True, exist_ok=True)
+            if kit is not None:
+                (folder / 'build-cache').mkdir(exist_ok=True)
+                (folder / 'build-cache' / 'state.json').write_text(json.dumps({'kit': kit, 'steps': {}}))
+            a.settings['game_dir'] = 'before'
+            a.message = ''
+            with mock.patch('launcher.ui.app.filedialog.askdirectory', return_value=str(folder)):
+                App.choose_folder(a)
+            return a.settings['game_dir']
+
+        official = self.tmp / 'Programs' / 'NX2navi' / 'game'
+        self.assertEqual(pick(official, '0.9.2'), 'before')
+        self.assertIn('official NX2navi', a.message)
+        self.assertEqual(pick(self.tmp / 'old', '0.8.0+abc1234'), 'before')
+        self.assertEqual(pick(self.tmp / 'ours', '0.9.2.1'), str(self.tmp / 'ours'))
+        self.assertEqual(a.message, '')
+        self.assertEqual(pick(self.tmp / 'ours-next', '0.9.3.1+abc1234'), str(self.tmp / 'ours-next'))
+        self.assertEqual(pick(self.tmp / 'empty'), str(self.tmp / 'empty'))
+        (self.tmp / 'full' / 'other').mkdir(parents=True)
+        self.assertEqual(pick(self.tmp / 'full'), str(self.tmp / 'full' / brand.FOLDER))
+        self.assertTrue(brand.own_version('0.9.2.1') and brand.own_version('v1.0.0.2-rc1'))
+        self.assertFalse(brand.own_version('0.9.2') or brand.own_version('0.0.1-ocarina') or brand.own_version(''))
+
+
 class BeginInstallTest(Tmp):
     def test_a_cut_romfs_image_does_not_block_the_install(self):
         """Begin Installation removes the romfs.bin.part an install that was cut short left before it measures the
