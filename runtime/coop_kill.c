@@ -1058,13 +1058,16 @@ static void players(uint64_t now) {
     }
 }
 
+// now is the present's clock, read before players(): an entry the co-op thread made, a pending death a life host made
+// and an area the frame hook entered since carry later times, which count as not older than now (the differences
+// below would else wrap round and drop them at once).
 static void housekeeping(uint64_t now) {
     Lines L = {.n = 0};
     int expired = 0, went = 0;
     plat_mutex_lock(&K.lock);
     for (int i = 0; i < NE; i++) {
         Entry *e = &K.e[i];
-        if (!atomic_load_explicit(&e->inst, memory_order_relaxed) || now - e->t_ms < 60000) continue;
+        if (!atomic_load_explicit(&e->inst, memory_order_relaxed) || e->t_ms >= now || now - e->t_ms < 60000) continue;
         if (!e->applied_comp)
             say(&L, "coop: kill: inst %llu (%s from seat %d) never updated here within 60 s: dropped", (unsigned long long)e->inst,
                 e->doom ? "a kill" : "hits", e->from);
@@ -1073,12 +1076,12 @@ static void housekeeping(uint64_t now) {
     }
     for (int i = 0; i < NP; i++) {   // a death whose actor went away before its next update: a death all the same
         Pend *p = &K.pend[i];
-        if (!atomic_load_explicit(&p->comp, memory_order_relaxed) || now - p->t_ms < 600) continue;
+        if (!atomic_load_explicit(&p->comp, memory_order_relaxed) || p->t_ms >= now || now - p->t_ms < 600) continue;
         if (p->area_gen == K.area_gen) kill_out(p->inst, p->hash, p->name, p->life, p->dmg, "its actor did not update again", now, &L);
         pend_free(p);
         went++;
     }
-    uint64_t t_area = now - atomic_load(&K.area_t0);
+    uint64_t area_t0 = atomic_load(&K.area_t0), t_area = now > area_t0 ? now - area_t0 : 0;
     for (int i = 0; i < K.ntest; i++) {   // as if another player killed or hit it
         Test *t = &K.test[i];
         if (t->kind != T_DOOM && t->kind != T_DMG) continue;
