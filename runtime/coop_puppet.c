@@ -970,6 +970,8 @@ typedef struct {
     Gear seen_want, seen_have;       // for the change logs
     int info, matched, bow_logged;
     uint32_t requests;
+    int seat;                        // the seat whose player this puppet shows (0: the shadow test's): its lines go
+                                     // through that seat's budget of log lines (coop_ext_log)
 } GearSync;
 
 static int gear_mode = 1;     // NX2NAVI_COOP_PUPPET_GEAR
@@ -1066,10 +1068,11 @@ static uint32_t gear_sig(const char *name, unsigned state) {
     return h;
 }
 
-// What is wanted of a kind now: when it changed, its tries start again at once.
+// What is wanted of a kind now: when it changed, its tries start again, still spaced from the kind's last request
+// (next), so that gear that keeps changing is asked for no faster than gear that stays.
 static void gear_want(GearSync *gs, int kind, const char *name, unsigned state) {
     uint32_t h = gear_sig(name, state);
-    if (h != gs->sig[kind]) gs->sig[kind] = h, gs->sig_frame[kind] = P.frames, gs->tries[kind] = 0, gs->next[kind] = 0;
+    if (h != gs->sig[kind]) gs->sig[kind] = h, gs->sig_frame[kind] = P.frames, gs->tries[kind] = 0;
 }
 
 // Whether the kind may be asked for now: spaced (next), not given up (tries), what is wanted stable for GEAR_STABLE
@@ -1081,8 +1084,9 @@ static int gear_may(GearSync *gs, uint64_t eu, int kind, int create, const char 
     if (create && kind_busy(eu, kind)) {   // busy_since is P.frames + 1 when first seen busy (0: not busy)
         if (!gs->busy_since[kind]) gs->busy_since[kind] = P.frames + 1 ? P.frames + 1 : 1;
         if (P.frames + 1 - gs->busy_since[kind] < GEAR_BUSY_LOG) return 0;
-        rt_log("coop: puppet: gear: w=%.2f %s %s: a create in flight for %u frames (request %#llx): asked anyway",
-               wsec(), who, kind_name[kind], GEAR_BUSY_LOG, (unsigned long long)LD64(eu + EU_REQ + 8ull * (unsigned)kind));
+        SEAT_LOG(gs->seat, "puppet: gear: w=%.2f %s %s: a create in flight for %u frames (request %#llx): asked anyway",
+                 wsec(), who, kind_name[kind], GEAR_BUSY_LOG,
+                 (unsigned long long)LD64(eu + EU_REQ + 8ull * (unsigned)kind));
     }
     gs->busy_since[kind] = 0;
     return 1;
@@ -1092,8 +1096,8 @@ static void gear_tried(GearSync *gs, int kind, uint32_t wait, const char *who, c
     gs->next[kind] = P.frames + wait;
     gs->requests++;
     if (++gs->tries[kind] == GEAR_TRIES)
-        rt_log("coop: puppet: gear: %s: %s %s still differs after %d requests, left until it changes", who,
-               kind_name[kind], what, GEAR_TRIES);
+        SEAT_LOG(gs->seat, "puppet: gear: %s: %s %s still differs after %d requests, left until it changes", who,
+                 kind_name[kind], what, GEAR_TRIES);
 }
 
 static uint64_t gear_cell(GearSync *gs, int kind, const char *name) {
@@ -1102,29 +1106,30 @@ static uint64_t gear_cell(GearSync *gs, int kind, const char *name) {
     return (uint64_t)(uintptr_t)&gs->cell[kind];
 }
 
-static void gear_log_changes(const char *who, const char *side, const Gear *now, Gear *seen, uint32_t since) {
+static void gear_log_changes(int seat, const char *who, const char *side, const Gear *now, Gear *seen, uint32_t since) {
     for (int j = 0; j < 7; j++)
         if (strcmp(now->dyn[j], seen->dyn[j]) || now->state[j] != seen->state[j])
-            rt_log("coop: puppet: gear: w=%.2f %s %s j%d %s '%s' state %u (was '%s' %u) after %u frames", wsec(), who,
-                   side, j, kind_name[dyn_kind[j]], now->dyn[j], now->state[j], seen->dyn[j], seen->state[j], since);
+            SEAT_LOG(seat, "puppet: gear: w=%.2f %s %s j%d %s '%s' state %u (was '%s' %u) after %u frames", wsec(), who,
+                     side, j, kind_name[dyn_kind[j]], now->dyn[j], now->state[j], seen->dyn[j], seen->state[j], since);
     for (int s = 0; s < GEAR_STAT; s++)
         if (strcmp(now->stat[s], seen->stat[s]))
-            rt_log("coop: puppet: gear: w=%.2f %s %s s%d %s '%s' (was '%s') after %u frames", wsec(), who, side, s,
-                   kind_name[stat_kind[s]], now->stat[s], seen->stat[s], since);
+            SEAT_LOG(seat, "puppet: gear: w=%.2f %s %s s%d %s '%s' (was '%s') after %u frames", wsec(), who, side, s,
+                     kind_name[stat_kind[s]], now->stat[s], seen->stat[s], since);
     *seen = *now;
 }
 
 // Makes the puppet's EU match want: one request per kind at a time, spaced, at most GEAR_TRIES each until what is
 // wanted of that kind changes, at most 2 requests a frame, and only names of their slots' families. drawn: 0 keeps the
 // puppet's weapon and shield sheathed.
-static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, const char *who, int drawn) {
+static void gear_apply(Cpu *c, int seat, uint64_t puppet, const Gear *want, GearSync *gs, const char *who, int drawn) {
     if (gs->puppet != puppet) {
         memset(gs, 0, sizeof *gs);
         gs->puppet = puppet, gs->seen_frame = P.frames;
     }
+    gs->seat = seat;
     uint64_t eu = eu_of(puppet);
     if (!eu) {
-        if (!gs->info) rt_log("coop: puppet: gear: %s %#llx has no EquipmentUser", who, (unsigned long long)puppet);
+        if (!gs->info) SEAT_LOG(seat, "puppet: gear: %s %#llx has no EquipmentUser", who, (unsigned long long)puppet);
         gs->info = 1;
         return;
     }
@@ -1132,14 +1137,14 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
     uint32_t since = P.frames - gs->seen_frame;
     if (!gs->info) {
         gs->info = 1;
-        rt_log("coop: puppet: gear: w=%.2f %s %#llx EU %#llx (vtable %#llx) param %#llx pouch flag %u, in flight %#x",
-               wsec(), who, (unsigned long long)puppet, (unsigned long long)eu, (unsigned long long)LD64(eu),
-               (unsigned long long)LD64(eu + EU_PARAM), LD32(puppet + A_POUCH) & 1u, LD32(eu + EU_INFLIGHT));
+        SEAT_LOG(seat, "puppet: gear: w=%.2f %s %#llx EU %#llx (vtable %#llx) param %#llx pouch flag %u, in flight %#x",
+                 wsec(), who, (unsigned long long)puppet, (unsigned long long)eu, (unsigned long long)LD64(eu),
+                 (unsigned long long)LD64(eu + EU_PARAM), LD32(puppet + A_POUCH) & 1u, LD32(eu + EU_INFLIGHT));
     }
     Gear have;
     gear_read(c, puppet, &have);
-    gear_log_changes(who, "Link", want, &gs->seen_want, since);
-    gear_log_changes(who, "puppet", &have, &gs->seen_have, since);
+    gear_log_changes(seat, who, "Link", want, &gs->seen_want, since);
+    gear_log_changes(seat, who, "puppet", &have, &gs->seen_have, since);
     int asked = 0, match = 1;
     // Bow items (slot j3: slingshot, bow, hookshot) read their owner's component +0x358 (the behaviour-state
     // animation one, which Link has and the pause menu Link's copy has not) with no null check: the slingshot's
@@ -1149,8 +1154,8 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
     int has_bsa = ok_ptr(comps, 0x360) && LD64(comps + 0x358) != 0;
     if (!has_bsa && want->dyn[3][0] && !gs->bow_logged) {
         gs->bow_logged = 1;
-        rt_log("coop: puppet: gear: %s j3 Bow '%s' left out: the puppet has no component +0x358, which bow items read",
-               who, want->dyn[3]);
+        SEAT_LOG(seat, "puppet: gear: %s j3 Bow '%s' left out: the puppet has no component +0x358, which bow items "
+                 "read", who, want->dyn[3]);
     }
 
     for (size_t q = 0; q < sizeof gear_js / sizeof *gear_js; q++) {
@@ -1178,24 +1183,24 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
         if (asked >= 2 || !gear_may(gs, eu, kind, !request, who)) continue;
         if (!ok) {   // Link has none there: take the puppet's off
             uint64_t r = rt_call(c, EQ_REMOVE_DYN, 8, eu, (uint64_t)j, 0ull, 0ull, 0ull, 0ull, 1ull, 0ull) & 1;
-            rt_log("coop: puppet: gear: w=%.2f %s remove j%d %s '%s' -> %llu", wsec(), who, j, kind_name[kind], h,
-                   (unsigned long long)r);
+            SEAT_LOG(seat, "puppet: gear: w=%.2f %s remove j%d %s '%s' -> %llu", wsec(), who, j, kind_name[kind], h,
+                     (unsigned long long)r);
             gear_tried(gs, kind, GEAR_RETRY, who, "removal"), asked++;
         } else if (strcmp(w, h)) {   // another item, or none yet: make Link's in his state
             uint64_t r = rt_call(c, EQ_CREATE_DYN, 7, eu, (uint64_t)kind, gear_cell(gs, kind, w), (uint64_t)ws,
                                  (uint64_t)0xffffffffu, 1ull, 0ull) & 1;
-            rt_log("coop: puppet: gear: w=%.2f %s ask %s j%d '%s' state %u -> %llu (puppet had '%s')", wsec(), who,
-                   kind_name[kind], j, w, ws, (unsigned long long)r, h);
+            SEAT_LOG(seat, "puppet: gear: w=%.2f %s ask %s j%d '%s' state %u -> %llu (puppet had '%s')", wsec(), who,
+                     kind_name[kind], j, w, ws, (unsigned long long)r, h);
             gear_tried(gs, kind, GEAR_RETRY, who, w), asked++;
         } else {
             uint64_t r;
             if (request) r = rt_call(c, ws == 1 ? EQ_DRAW : EQ_SHEATHE, 2, eu, (uint64_t)j) & 1;
             else r = rt_call(c, EQ_CREATE_DYN, 7, eu, (uint64_t)kind, gear_cell(gs, kind, w), (uint64_t)ws,
                              (uint64_t)0xffffffffu, 1ull, 0ull) & 1;
-            rt_log("coop: puppet: gear: w=%.2f %s %s j%d '%s' %u -> %u (%s) -> %llu", wsec(), who,
-                   ws == 1 ? "draw" : ws == 2 ? "sheathe" : "stow", j, w, have.state[j], ws,
-                   request ? "state request" : "made again",
-                   (unsigned long long)r);
+            SEAT_LOG(seat, "puppet: gear: w=%.2f %s %s j%d '%s' %u -> %u (%s) -> %llu", wsec(), who,
+                     ws == 1 ? "draw" : ws == 2 ? "sheathe" : "stow", j, w, have.state[j], ws,
+                     request ? "state request" : "made again",
+                     (unsigned long long)r);
             gear_tried(gs, kind, request ? GEAR_STATE_WAIT : GEAR_RETRY, who, w), asked++;
         }
     }
@@ -1208,8 +1213,8 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
         gear_want(gs, kind, w, 0);
         if (asked >= 2 || !gear_may(gs, eu, kind, 1, who)) continue;
         uint64_t r = rt_call(c, EQ_CREATE_STAT, 5, eu, (uint64_t)kind, gear_cell(gs, kind, w), 0ull, 1ull) & 1;
-        rt_log("coop: puppet: gear: w=%.2f %s ask %s s%d '%s' -> %llu", wsec(), who, kind_name[kind], s, w,
-               (unsigned long long)r);
+        SEAT_LOG(seat, "puppet: gear: w=%.2f %s ask %s s%d '%s' -> %llu", wsec(), who, kind_name[kind], s, w,
+                 (unsigned long long)r);
         gear_tried(gs, kind, GEAR_RETRY, who, w), asked++;
     }
     for (int s = 0; s < GEAR_STAT; s++) {   // static: the puppet's items Link does not wear
@@ -1219,15 +1224,16 @@ static void gear_apply(Cpu *c, uint64_t puppet, const Gear *want, GearSync *gs, 
         match = 0;
         if (asked >= 2 || !gear_may(gs, eu, kind, 1, who)) continue;
         uint64_t r = rt_call(c, EQ_REMOVE_STAT, 3, eu, (uint64_t)s, 0ull) & 1;
-        rt_log("coop: puppet: gear: w=%.2f %s remove s%d %s '%s' -> %llu", wsec(), who, s, kind_name[kind], h,
-               (unsigned long long)r);
+        SEAT_LOG(seat, "puppet: gear: w=%.2f %s remove s%d %s '%s' -> %llu", wsec(), who, s, kind_name[kind], h,
+                 (unsigned long long)r);
         gear_tried(gs, kind, GEAR_RETRY, who, "removal"), asked++;
     }
     if (match != gs->matched) {
         gs->matched = match;
-        rt_log("coop: puppet: gear: w=%.2f %s %s Link after %u frames (%u requests so far; EU +0x12d0 %#x, requests "
-               "j0 %#llx j4 %#llx)", wsec(), who, match ? "matches" : "differs from", since, gs->requests,
-               LD32(eu + EU_INFLIGHT), (unsigned long long)LD64(eu + EU_REQ), (unsigned long long)LD64(eu + EU_REQ + 48));
+        SEAT_LOG(seat, "puppet: gear: w=%.2f %s %s Link after %u frames (%u requests so far; EU +0x12d0 %#x, requests "
+                 "j0 %#llx j4 %#llx)", wsec(), who, match ? "matches" : "differs from", since, gs->requests,
+                 LD32(eu + EU_INFLIGHT), (unsigned long long)LD64(eu + EU_REQ),
+                 (unsigned long long)LD64(eu + EU_REQ + 48));
     }
 }
 
@@ -1242,7 +1248,7 @@ static GearSync gear_sync[COOP_PLAYERS + 1];
 // player's gear (slot: their seat).
 static void puppet_dress(Cpu *c, int slot, uint64_t puppet, const Gear *want, const char *who) {
     if (!gear_mode || !puppet || !want || slot < 0 || slot > COOP_PLAYERS) return;
-    gear_apply(c, puppet, want, &gear_sync[slot], who, gear_drawn);
+    gear_apply(c, slot, puppet, want, &gear_sync[slot], who, gear_drawn);
 }
 
 // The shadow test's gear: Link's gear of each frame, kept as long as his poses (P.ring).
