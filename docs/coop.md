@@ -53,8 +53,13 @@ rid of someone, the host removes them; to be sure, leave and create a new room.
   talks, chests, doors, switches, bosses, maps and compasses), items and equipment, songs, quest items, wallet, bag and
   quiver sizes. A flag anyone has set is set for everyone, and of a count the highest wins. A player who joins later
   gets what the room has, and the room what the joiner brings. Your game saves it as its own progress.
-- **Each player keeps their own** small keys, rupees, ammunition, heart pieces and containers, gold skulltula tokens,
-  bottle contents, the trade sequence, the equipment worn, life and magic.
+- **Each player keeps their own** rupees, ammunition, heart pieces and containers, gold skulltula tokens, bottle
+  contents, the trade sequence, the equipment worn, life and magic.
+- **Small keys are the room's** while *Shared small keys* is on (it is, by default, with *Share progress*): one count
+  for each dungeon, kept by the room's host. A key anyone picks up is everyone's, and a locked door anyone opens uses up
+  a key for everyone, as the door is open for everyone. A player who joins takes the room's counts, whatever their own
+  save had; when the host leaves, the next host carries on from the counts it had. Off, or with a host who has it off,
+  each player's small keys are their own.
 - **Nothing is undone.** Leaving a room keeps what was shared. A player in the room plays with you: what they do in
   their world happens in yours, and a game that wants to can send progress it did not play for. Join rooms of people
   you trust with your save, as you would hand them your controller, and go back to the copy if you regret it.
@@ -94,6 +99,7 @@ dropped and counted in the log.
 | `coop_share` | `1` | in a room, share progress, items and songs (above) |
 | `coop_names` | `1` | show the other players' names where they stand. Needs DLSS, FSR or TAA on: only then does the menu know where the camera looks |
 | `coop_chat` | `1` | show new chat lines, and who joined or left, over the game for a few seconds while the menu is closed |
+| `coop_keys` | `pool` | in a room with `coop_share` on, one count of small keys per dungeon for the whole room, kept by the room's host (above); `own`: each player's keys are their own |
 
 A settings file cannot put a game into a room: a room is made or joined only from the menu.
 
@@ -162,6 +168,19 @@ player's own; the room's time of day; and the era following the players both way
 Steam described here (`runtime/coop_ext.c` carries their messages between the games of a room), with the settings of the
 NX2navi Co-op block of `[coop]` in `nx2navi.ini.example`. The room's host keeps the room's time of day and era, and
 sends them at once to a player who comes: a player who joins in the other era is taken into the room's era.
+
+**Small keys** (`runtime/coop_keys.c`). The game keeps the small keys of each dungeon as a counter of its own, which one
+routine changes: a key picked up adds one in the dungeon Link is in, and a locked door takes one while the count is
+above 0. The room's host keeps one count per dungeon, between 0 and the most keys that dungeon holds (the five dungeons
+without small keys are left alone): at first its own save's. Every other game sets its counters to the host's counts
+(KEYS) through the game's own setter, once its save is copied for the room; a change in a game goes to the host (KEY)
+and again every 3 s until a KEYS of the host acks it, so the host takes each change once, in order. KEYS goes to
+everyone at each change, to a player who comes and every 10 s. A counter is neither read nor written while a change of
+it waits in the game's queue of flag changes, so no write of the room's overwrites a key the game is giving or taking
+in that frame, and after a save is loaded the counters are read anew without counting the difference as a change. Log
+lines start with `coop: keys:`. For tests, `NX2NAVI_DBG_TEST="<tick>:smallkey <n>"` picks up n keys in the dungeon
+Link is in through the same routine (a negative n uses them), and `tests/coop_ext_peer.py --key <hash>:<n>@<s>` sends a
+KEY.
 
 NX2navi Co-op's rooms are its own: their lobbies carry the note `nx2navi_coop = 1` instead of `nx2navi = 1`, and its
 protocol numbers count from 1001. A game of NX2navi itself leaves an NX2navi Co-op lobby as somebody else's and an
