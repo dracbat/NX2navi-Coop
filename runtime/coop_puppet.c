@@ -49,6 +49,7 @@
 #include "coop_cutscene.h"
 #include "coop_ext.h"
 #include "coop_ext_wire.h"
+#include "coop_game.h"
 #include "coop_kill.h"
 #include "coop_puppet.h"
 #include "coop_tags.h"
@@ -1346,10 +1347,11 @@ static void shadow(Cpu *c, uint64_t player) {
 // The co-op thread keeps each seat's poses with their arrival times (coop_ext.h names the room's players by seat), and
 // every frame the game thread shows each other player whose Link is in this Link's area as a puppet at their pose of
 // about 100 ms ago, between the two poses received around then (their senders' clocks put on ours by the smallest
-// delay seen). A puppet goes when its player leaves the area, the room or the world, or goes silent for 3 s. Only the
-// room's players reach this file (coop.c delivers nothing from a player who is not on the host's list), and a pose
-// counts only above the last one taken from the same seat and gen (coop_pos_fresh): a PUPPET is sent unreliably and
-// may come late, and an old pose must not move a puppet back while the player's own keep arriving.
+// delay seen). A puppet goes when its player leaves the area, the room or the world (for the title screen too, where
+// their Link's actor stays: coop_game_played), or goes silent for 3 s. Only the room's players reach this file
+// (coop.c delivers nothing from a player who is not on the host's list), and a pose counts only above the last one
+// taken from the same seat and gen (coop_pos_fresh): a PUPPET is sent unreliably and may come late, and an old pose
+// must not move a puppet back while the player's own keep arriving.
 //
 // What another game's numbers can do here: coop_puppet_parse refuses a position beyond 1e6 m, a yaw beyond 7 radians
 // and a frame beyond 1e6, and remote_pose blends between two poses taken with its factor held to 0..1, so every
@@ -1632,11 +1634,14 @@ static void gear_tick(Cpu *c, uint64_t player, uint64_t now) {
 
 static void remotes(Cpu *c, uint64_t player, const char *area) {
     int others = N.others, self = N.self, files = N.files;
+    // this Link is in the world while a save is played since the title screen: there his actor and the area flag stay
+    // from the save played before, and neither his PUPPET nor a puppet here may say he still stands in it
+    int in_world = player && area[0] && coop_game_played();
     uint64_t now = plat_now_ms();
     if (others && now - N.puppet_at >= PUPPET_EVERY_MS) {   // on a clock, not every n-th frame (the frame rate is unlimited)
         N.puppet_at = now;
-        gear_tick(c, area[0] ? player : 0, now);
-        send_puppet(c, player, area, now);
+        gear_tick(c, in_world ? player : 0, now);
+        send_puppet(c, in_world ? player : 0, area, now);
     }
     static Remote r[COOP_PLAYERS + 1];
     static uint32_t gen[COOP_PLAYERS + 1];
@@ -1669,7 +1674,7 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
         memset(&pose, 0, sizeof pose);
         int heard = others && s != self && gen[s] && r[s].n && now - r[s].recv_ms[r[s].head] < SILENT_MS;
         if (heard) remote_pose(&r[s], (uint32_t)now, &pose);
-        int here = heard && player && area[0] && (pose.flags & COOP_PUPPET_IN_WORLD) && !strcmp(pose.area, area);
+        int here = heard && in_world && (pose.flags & COOP_PUPPET_IN_WORLD) && !strcmp(pose.area, area);
         int scene = here && coop_cutscene_hides_puppets();   // no puppet stands in a story cutscene here
         int want = here && !scene && P.remote && files > 0;
         char name[64] = "";
@@ -1677,7 +1682,8 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
         int held = p->state == SP_ASKED || p->state == SP_FOLLOW, other = held && N.puppet_gen[s] != gen[s];
         if (held && (!want || other || strcmp(p->s.text, name))) {
             rt_log("coop: puppet: seat %d's puppet goes (%s)", s,
-                   other ? "another player is in the seat" : !heard ? "not heard" : !here ? "not in this area"
+                   other ? "another player is in the seat" : !heard ? "not heard"
+                   : !in_world ? "this game is not in the world" : !here ? "not in this area"
                    : scene ? "a cutscene plays here" : !P.remote ? "the puppets are off (NX2NAVI_COOP_PUPPETS=0)"
                    : files <= 0 ? "the puppets' files are missing" : "other age");
             puppet_release(c, p);
