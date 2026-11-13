@@ -1,5 +1,5 @@
 """A second NX2navi Co-op player without a second game, for tests on one PC, and the Python codec of NX2navi Co-op's own
-messages (runtime/coop_ext_wire.h, kinds 0x40..0x48).
+messages (runtime/coop_ext_wire.h, kinds 0x40..0x4a).
 
 It speaks the stand-in for Steam (runtime/coop_local.c: datagrams between UDP ports on 127.0.0.1) and the room's
 messages (runtime/coop.c, runtime/coop_game.c) to a game started with NX2NAVI_COOP_LOCAL=<host port> and
@@ -29,6 +29,9 @@ Modes (any together):
                              game's Link was first seen (the game keeps 16 of one sender's at most)
     --era child|adult[:AREA[:X,Y,Z]]@S   a change of era, S seconds after the game's Link was first seen, with a place of
                              that era (default: where the game's Link stands)
+    --key HASH:N@S           a small key change (KEY) to the room's host, S seconds after the game's Link was first seen:
+                             N keys picked up (N > 0) or used (N < 0) in the dungeon of that small-key counter (hex hash);
+                             may be given again. Each must be taken: a later KEYS of the host acks it
 
 It prints what the game sends, with the kinds' names, and ends with "peer: ok" or "peer: FAILED" for what its modes
 check; python's exit code says the same.
@@ -49,15 +52,16 @@ from pathlib import Path
 L_JOIN, L_MEMBERS, L_DATA, L_LEAVE = 1, 2, 3, 4
 K_HELLO, K_WELCOME, K_REFUSED, K_ROSTER, K_POSE, K_CHAT = 1, 2, 3, 4, 5, 6
 K_FLAGS, K_ASK = 16, 17
-K_KILL, K_DAMAGE, K_CUTSCENE, K_TIME, K_ERA, K_PUPPET, K_GEAR, K_PICK, K_COLOURS = range(0x40, 0x49)
+K_KILL, K_DAMAGE, K_CUTSCENE, K_TIME, K_ERA, K_PUPPET, K_GEAR, K_PICK, K_COLOURS, K_KEYS, K_KEY = range(0x40, 0x4b)
 KIND_NAMES = {K_KILL: 'KILL', K_DAMAGE: 'DAMAGE', K_CUTSCENE: 'CUTSCENE', K_TIME: 'TIME', K_ERA: 'ERA',
-              K_PUPPET: 'PUPPET', K_GEAR: 'GEAR', K_PICK: 'PICK', K_COLOURS: 'COLOURS'}
+              K_PUPPET: 'PUPPET', K_GEAR: 'GEAR', K_PICK: 'PICK', K_COLOURS: 'COLOURS', K_KEYS: 'KEYS', K_KEY: 'KEY'}
 PROTOCOL, GAME_BUILD = 1001, 0xE0F3CCFA
 COLOUR_NAMES = ['green', 'red', 'blue', 'purple']
 COLOUR_NONE = 0xFF
 PLAYERS = 4
 DAY = 86400
 TEXT, SLOTS, GEAR_DYN, GEAR_STAT = 47, 4, 7, 13
+KEYS_DUNGEONS, KEYS_MAX = 16, 15
 VECTORS = Path(__file__).resolve().parent / 'coop_ext_vectors.txt'
 
 
@@ -332,12 +336,48 @@ def colours_parse(b):
     return entries
 
 
+def keys_pack(m):
+    d, acks = m['d'], m['acks']
+    need(len(d) <= KEYS_DUNGEONS and len(acks) <= PLAYERS)
+    need(all(h and 0 <= k <= KEYS_MAX for h, k in d) and len({h for h, _ in d}) == len(d))
+    need(all(i and ss for i, ss, _ in acks) and len({i for i, _, _ in acks}) == len(acks))
+    return (struct.pack('<BIB', 1, m['serial'], len(d)) + b''.join(struct.pack('<IB', h, k) for h, k in d) +
+            bytes([len(acks)]) + b''.join(struct.pack('<QII', i, ss, q) for i, ss, q in acks))
+
+
+def keys_parse(b):
+    need(len(b) >= 7 and b[0] == 1 and b[5] <= KEYS_DUNGEONS)
+    n = b[5]
+    at = 6 + 5 * n
+    need(at < len(b))
+    d = [struct.unpack_from('<IB', b, 6 + 5 * i) for i in range(n)]
+    na = b[at]
+    need(na <= PLAYERS and len(b) == at + 1 + 16 * na)
+    acks = [struct.unpack_from('<QII', b, at + 1 + 16 * i) for i in range(na)]
+    m = {'serial': struct.unpack_from('<I', b, 1)[0], 'd': d, 'acks': acks}
+    keys_pack(m)   # the same range checks
+    return m
+
+
+def key_pack(m):
+    need(m['sess'] and m['seq'] and m['hash'] and m['delta'] and -KEYS_MAX <= m['delta'] <= KEYS_MAX)
+    return struct.pack('<BIIIb', 1, m['sess'], m['seq'], m['hash'], m['delta'])
+
+
+def key_parse(b):
+    need(len(b) == 14 and b[0] == 1)
+    _, sess, seq, h, delta = struct.unpack('<BIIIb', b)
+    m = {'sess': sess, 'seq': seq, 'hash': h, 'delta': delta}
+    key_pack(m)
+    return m
+
+
 PARSERS = {K_KILL: lambda b: kill_parse(K_KILL, b), K_DAMAGE: lambda b: kill_parse(K_DAMAGE, b), K_CUTSCENE: cut_parse,
            K_TIME: time_parse, K_ERA: era_parse, K_PUPPET: puppet_parse, K_GEAR: gear_parse, K_PICK: pick_parse,
-           K_COLOURS: colours_parse}
+           K_COLOURS: colours_parse, K_KEYS: keys_parse, K_KEY: key_parse}
 PACKERS = {K_KILL: lambda m: kill_pack(K_KILL, m), K_DAMAGE: lambda m: kill_pack(K_DAMAGE, m), K_CUTSCENE: cut_pack,
            K_TIME: time_pack, K_ERA: era_pack, K_PUPPET: puppet_pack, K_GEAR: gear_pack, K_PICK: pick_pack,
-           K_COLOURS: colours_pack}
+           K_COLOURS: colours_pack, K_KEYS: keys_pack, K_KEY: key_pack}
 
 
 def parses(kind, b):
@@ -351,7 +391,7 @@ def parses(kind, b):
 # ---- the byte vectors (tests/coop_ext_vectors.txt)
 
 VECTOR_HEADER = """\
-# Byte vectors of NX2navi Co-op's own messages (runtime/coop_ext_wire.h, kinds 0x40..0x48). Written by
+# Byte vectors of NX2navi Co-op's own messages (runtime/coop_ext_wire.h, kinds 0x40..0x4a). Written by
 # `python tests/coop_ext_peer.py --write-vectors tests/coop_ext_vectors.txt`, checked by --check-vectors and by
 # runtime/coop_ext_probe.c (--probe-coop-ext, the file named by NX2NAVI_COOP_EXT_VECTORS): each message must parse to
 # the fields given and pack to the same bytes; every shorter or longer copy of it must be refused.
@@ -367,6 +407,8 @@ VECTOR_HEADER = """\
 # gear <name> <hex> <sig> (d<slot>:<state>:<name>)... (s<slot>:<name>)...
 # pick <name> <hex> <pick>
 # colours <name> <hex> <count> (<id> <colour>)...
+# keys <name> <hex> <serial> <count> (<hash> <keys>)... <acks> (<id> <sess> <seq>)...
+# key <name> <hex> <sess> <seq> <hash> <change>
 # reject <kind> <name> <hex>                       the kind's parser must refuse it
 """
 
@@ -422,6 +464,14 @@ def vector_set():
     good += [(K_PICK, 'pick-green', 0), (K_PICK, 'pick-purple', 3), (K_PICK, 'pick-auto', COLOUR_NONE)]
     good += [(K_COLOURS, 'colours-none', []), (K_COLOURS, 'colours-two', [(101, 0), (102, 1)]),
              (K_COLOURS, 'colours-four', [(2**64 - 1, 3), (1, 2), (0x123456789ABCDEF0, 1), (12345, 0)])]
+    good += [(K_KEYS, 'keys-empty', {'serial': 0, 'd': [], 'acks': []}),
+             (K_KEYS, 'keys-two', {'serial': 7, 'd': [(0x7DD79D10, 3), (0x90237092, 0)], 'acks': [(21, 5, 9)]}),
+             (K_KEYS, 'keys-full', {'serial': 0xFFFFFFFF, 'd': [(0x1000 + i, i % (KEYS_MAX + 1)) for i in range(KEYS_DUNGEONS)],
+                                    'acks': [(2**64 - 1, 1, 0), (1, 0xFFFFFFFF, 0xFFFFFFFF), (0x123456789ABCDEF0, 2, 3),
+                                             (12345, 4, 1)]})]
+    good += [(K_KEY, 'key-picked-up', {'sess': 5, 'seq': 1, 'hash': 0x7DD79D10, 'delta': 1}),
+             (K_KEY, 'key-used', {'sess': 0xFFFFFFFF, 'seq': 0xFFFFFFFF, 'hash': 0xFFFFFFFF, 'delta': -1}),
+             (K_KEY, 'key-edges', {'sess': 1, 'seq': 2, 'hash': 1, 'delta': -KEYS_MAX})]
 
     def raw(kind, m):
         return PACKERS[kind](m)
@@ -471,6 +521,21 @@ def vector_set():
             (K_COLOURS, 'colours-colour', b'\x01\x01' + struct.pack('<QB', 1, 4)),
             (K_COLOURS, 'colours-same-id', b'\x01\x02' + struct.pack('<QB', 5, 0) + struct.pack('<QB', 5, 1)),
             (K_COLOURS, 'colours-same-colour', b'\x01\x02' + struct.pack('<QB', 5, 2) + struct.pack('<QB', 6, 2))]
+    kk = raw(K_KEYS, {'serial': 7, 'd': [(0x7DD79D10, 3)], 'acks': [(21, 5, 9)]})
+    bad += [(K_KEYS, 'keys-version', b'\x02' + kk[1:]),
+            (K_KEYS, 'keys-count', b'\x01' + kk[1:5] + b'\x11' + struct.pack('<IB', 1, 0) * 17 + b'\x00'),
+            (K_KEYS, 'keys-acks', kk[:11] + b'\x05' + struct.pack('<QII', 1, 1, 0) * 5),
+            (K_KEYS, 'keys-sixteen', kk[:10] + b'\x10' + kk[11:]),
+            (K_KEYS, 'keys-hash-zero', kk[:6] + b'\x00' * 4 + kk[10:]),
+            (K_KEYS, 'keys-same-hash', b'\x01' + kk[1:5] + b'\x02' + kk[6:11] * 2 + b'\x00'),
+            (K_KEYS, 'keys-id-zero', kk[:12] + b'\x00' * 8 + kk[20:]),
+            (K_KEYS, 'keys-sess-zero', kk[:20] + b'\x00' * 4 + kk[24:]),
+            (K_KEYS, 'keys-same-id', kk[:11] + b'\x02' + kk[12:] * 2)]
+    ke = raw(K_KEY, {'sess': 5, 'seq': 1, 'hash': 0x7DD79D10, 'delta': 1})
+    bad += [(K_KEY, 'key-version', b'\x02' + ke[1:]), (K_KEY, 'key-none', ke[:13] + b'\x00'),
+            (K_KEY, 'key-sixteen', ke[:13] + b'\x10'), (K_KEY, 'key-minus-sixteen', ke[:13] + b'\xf0'),
+            (K_KEY, 'key-sess-zero', ke[:1] + b'\x00' * 4 + ke[5:]), (K_KEY, 'key-seq-zero', ke[:5] + b'\x00' * 4 + ke[9:]),
+            (K_KEY, 'key-hash-zero', ke[:9] + b'\x00' * 4 + ke[13:])]
     return good, bad
 
 
@@ -498,6 +563,10 @@ def vector_line(kind, name, m):
         f += [f's{s}:{tx(n)}' for s, n in enumerate(m['stat']) if n]
     elif kind == K_PICK:
         f = [m]
+    elif kind == K_KEYS:
+        f = [m['serial'], len(m['d'])] + [x for e in m['d'] for x in e] + [len(m['acks'])] + [x for e in m['acks'] for x in e]
+    elif kind == K_KEY:
+        f = [m['sess'], m['seq'], m['hash'], m['delta']]
     else:
         f = [len(m)] + [x for e in m for x in e]
     return ' '.join([KIND_NAMES[kind].lower(), name, h] + [str(x) for x in f])
@@ -605,6 +674,11 @@ def describe(kind, body):
         return 'GEAR ' + ', '.join(n.decode() for n, _ in m['dyn'] if n) + ' | ' + ', '.join(n.decode() for n in m['stat'] if n)
     if kind == K_PICK:
         return 'PICK ' + (COLOUR_NAMES[m] if m < 4 else 'auto')
+    if kind == K_KEYS:
+        return (f"KEYS serial {m['serial']}: " + (', '.join(f'{h:08x}={k}' for h, k in m['d']) or 'no counts') +
+                f"; {len(m['acks'])} acks")
+    if kind == K_KEY:
+        return f"KEY {m['delta']:+d} for {m['hash']:08x} (seq {m['seq']})"
     return 'COLOURS ' + ', '.join(f'{COLOUR_NAMES[c]}' for _, c in m)
 
 
@@ -663,6 +737,7 @@ def main():
     ap.add_argument('--time', action='append', default=[])
     ap.add_argument('--damage-flood', default=None)
     ap.add_argument('--era', default=None)
+    ap.add_argument('--key', action='append', default=[])
     ap.add_argument('--write-vectors', type=Path, default=None)
     ap.add_argument('--check-vectors', type=Path, default=None)
     a = ap.parse_args()
@@ -727,6 +802,10 @@ def main():
     for spec in a.flags_at:
         s, _, hashes = spec.partition(':')
         timed.append([float(s), ('flags', [int(h, 16) for h in hashes.split(',') if h]), False])
+    for spec in a.key:
+        what, at = parse_at(spec)
+        h, _, delta = what.partition(':')
+        timed.append([at, ('key', int(h, 16), int(delta)), False])
     if a.era:
         what, at = parse_at(a.era)
         era, _, place = what.partition(':')
@@ -734,6 +813,8 @@ def main():
         timed.append([at, ('era', era == 'adult', area.encode(), [f32(float(v)) for v in xyz.split(',')] if xyz else [0.0] * 3),
                       False])
     seen = {}                 # kind -> count received
+    key_sess = random.getrandbits(32) | 1
+    key_seq = key_acked = 0   # the last KEY sent, and the last the host's KEYS acked
     orders = {'time': 0, 'era': 0}
     mirrored = kills = 0
     epoch = random.getrandbits(32) | 1
@@ -795,6 +876,10 @@ def main():
                         orders['time'] = order
                     send(K_TIME, time_pack({'epoch': epoch, 'seq': seq, 'order': order & 0xFFFFFFFF, 'tod': what[1], 'flags': 1}))
                     print(f'peer: TIME jump to {what[1] // 3600:02d}:{what[1] // 60 % 60:02d}, order {order & 0xFFFFFFFF}')
+                elif what[0] == 'key':
+                    key_seq += 1
+                    send(K_KEY, key_pack({'sess': key_sess, 'seq': key_seq, 'hash': what[1], 'delta': what[2]}))
+                    print(f'peer: KEY {what[2]:+d} for {what[1]:08x} (seq {key_seq})')
                 elif what[0] == 'flood':
                     area = (host_pose[0] if host_pose else '').encode()
                     for i in range(what[1]):
@@ -909,6 +994,11 @@ def main():
                 orders['time'] = max(orders['time'], time_parse(b)['order'])
             if kind == K_ERA and parses(kind, b):
                 orders['era'] = max(orders['era'], era_parse(b)['order'])
+            if kind == K_KEYS and parses(kind, b):
+                for _, ss, q in keys_parse(b)['acks']:
+                    if ss == key_sess and q != key_acked:
+                        key_acked = q
+                        print(f'peer: the host took the KEY changes up to seq {q}')
     sock.sendto(bytes([L_LEAVE]), host)
     seen_link = bool(world_at)
     print(f'peer: welcomed {welcomed}, saw the game\'s Link in the world {seen_link}, got {got_pairs} values of its '
@@ -939,6 +1029,8 @@ def main():
     for t in timed:
         if not t[2]:
             fails.append(f'{t[1][0]} not sent')
+    if key_seq and key_acked != key_seq:
+        fails.append(f'the host took the KEY changes up to seq {key_acked} of {key_seq}')
     if fails:
         print('peer: FAILED: ' + '; '.join(fails))
         return 1

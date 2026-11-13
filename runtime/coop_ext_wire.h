@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-// The kinds, from COOP_EXT_KIND (coop.h) on. 0x49 and up are free for the next messages.
+// The kinds, from COOP_EXT_KIND (coop.h) on. 0x4b and up are free for the next messages.
 enum {
     COOP_K_KILL = 0x40,   // an enemy one player killed (coop_kill.c)
     COOP_K_DAMAGE,        // a hit one player dealt to an enemy (coop_kill.c)
@@ -30,6 +30,8 @@ enum {
     COOP_K_GEAR,          // what a player's Link wears and holds (coop_puppet.c)
     COOP_K_PICK,          // the colour a player picked (coop_colours.c)
     COOP_K_COLOURS,       // the colours the host gave the players (coop_colours.c)
+    COOP_K_KEYS,          // the room's small keys, from its host (coop_keys.c)
+    COOP_K_KEY,           // a small key a player picked up or used (coop_keys.c)
     COOP_K_EXT_END,       // the first kind not used yet
 };
 // The kind's name for log lines ("KILL"), "?" for a kind this build does not know.
@@ -152,6 +154,31 @@ size_t coop_pick_pack(uint8_t pick, uint8_t *out, size_t cap);
 int coop_pick_parse(const uint8_t *b, size_t n, uint8_t *pick);
 size_t coop_colours_pack(const CoopColoursMsg *m, uint8_t *out, size_t cap);
 int coop_colours_parse(const uint8_t *b, size_t n, CoopColoursMsg *m);
+
+// ---- the room's small keys: KEYS (the host only, reliable, at each change, when a player comes and every few
+// seconds): u8 version 1, u32 serial (one more at each change of the host's counts), u8 count (0..16), count x (u32
+// the hash of a dungeon's small-key counter, u8 keys 0..COOP_KEYS_MAX), u8 acks (0..4), acks x (u64 a player's id, u32
+// their sess, u32 the last seq of theirs the host took): hashes and ids not 0 and each at most once, sess not 0. At
+// most 151 bytes. KEY (a player to the host, reliable, until a KEYS acks it): u8 version 1, u32 sess (the sender's,
+// random and not 0, another at each room), u32 seq (1 for the first change in that sess, one more for each next), u32
+// the counter's hash (not 0), i8 the change (-COOP_KEYS_MAX..COOP_KEYS_MAX, not 0: keys picked up, or used when
+// below 0). 14 bytes.
+enum { COOP_KEYS_VERSION = 1, COOP_KEYS_DUNGEONS = 16, COOP_KEYS_MAX = 15, COOP_KEYS_MSG_MAX = 7 + 5 * 16 + 16 * COOP_PLAYERS,
+       COOP_KEY_VERSION = 1, COOP_KEY_MSG = 14 };
+typedef struct {
+    uint32_t serial;
+    uint8_t n, nack;
+    struct { uint32_t hash; uint8_t keys; } d[COOP_KEYS_DUNGEONS];
+    struct { uint64_t id; uint32_t sess, seq; } ack[COOP_PLAYERS];
+} CoopKeysMsg;
+typedef struct {
+    uint32_t sess, seq, hash;
+    int8_t delta;
+} CoopKeyMsg;
+size_t coop_keys_pack(const CoopKeysMsg *m, uint8_t *out, size_t cap);
+int coop_keys_parse(const uint8_t *b, size_t n, CoopKeysMsg *m);
+size_t coop_key_pack(const CoopKeyMsg *m, uint8_t *out, size_t cap);
+int coop_key_parse(const uint8_t *b, size_t n, CoopKeyMsg *m);
 
 // Any kind above: the message parsed and packed again into out (cap), its length; 0 when it does not parse (or the
 // kind is none of these). A message that parses packs to the same bytes.

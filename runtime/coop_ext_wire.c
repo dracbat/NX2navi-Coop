@@ -7,7 +7,8 @@
 
 _Static_assert(COOP_K_KILL == COOP_EXT_KIND, "the modules' kinds start where coop.h gives them room");
 
-static const char *const kind_names[] = {"KILL", "DAMAGE", "CUTSCENE", "TIME", "ERA", "PUPPET", "GEAR", "PICK", "COLOURS"};
+static const char *const kind_names[] = {"KILL", "DAMAGE", "CUTSCENE", "TIME", "ERA", "PUPPET", "GEAR", "PICK", "COLOURS",
+                                         "KEYS", "KEY"};
 _Static_assert(sizeof kind_names / sizeof kind_names[0] == COOP_K_EXT_END - COOP_K_KILL, "a name for every kind");
 
 const char *coop_ext_kind_name(uint8_t kind) {
@@ -399,6 +400,74 @@ int coop_colours_parse(const uint8_t *b, size_t n, CoopColoursMsg *m) {
     return 1;
 }
 
+// ---- KEYS and KEY
+
+static int keys_ok(const CoopKeysMsg *m) {
+    if (m->n > COOP_KEYS_DUNGEONS || m->nack > COOP_PLAYERS) return 0;
+    for (int i = 0; i < m->n; i++) {
+        if (!m->d[i].hash || m->d[i].keys > COOP_KEYS_MAX) return 0;
+        for (int k = 0; k < i; k++)
+            if (m->d[k].hash == m->d[i].hash) return 0;
+    }
+    for (int i = 0; i < m->nack; i++) {
+        if (!m->ack[i].id || !m->ack[i].sess) return 0;
+        for (int k = 0; k < i; k++)
+            if (m->ack[k].id == m->ack[i].id) return 0;
+    }
+    return 1;
+}
+
+size_t coop_keys_pack(const CoopKeysMsg *m, uint8_t *out, size_t cap) {
+    size_t n = 7 + 5 * (size_t)m->n + 16 * (size_t)m->nack;
+    if (!keys_ok(m) || n > cap) return 0;
+    uint8_t *p = out;
+    *p++ = COOP_KEYS_VERSION;
+    put32(p, m->serial), p += 4;
+    *p++ = m->n;
+    for (int i = 0; i < m->n; i++) put32(p, m->d[i].hash), p[4] = m->d[i].keys, p += 5;
+    *p++ = m->nack;
+    for (int i = 0; i < m->nack; i++) put64(p, m->ack[i].id), put32(p + 8, m->ack[i].sess), put32(p + 12, m->ack[i].seq), p += 16;
+    return n;
+}
+
+int coop_keys_parse(const uint8_t *b, size_t n, CoopKeysMsg *m) {
+    memset(m, 0, sizeof *m);
+    if (n < 7 || b[0] != COOP_KEYS_VERSION || b[5] > COOP_KEYS_DUNGEONS) return 0;
+    CoopKeysMsg r;
+    memset(&r, 0, sizeof r);
+    r.serial = get32(b + 1), r.n = b[5];
+    size_t at = 6 + 5 * (size_t)r.n;
+    if (at >= n) return 0;
+    for (int i = 0; i < r.n; i++) r.d[i].hash = get32(b + 6 + 5 * i), r.d[i].keys = b[6 + 5 * i + 4];
+    r.nack = b[at++];
+    if (r.nack > COOP_PLAYERS || n != at + 16 * (size_t)r.nack) return 0;
+    for (int i = 0; i < r.nack; i++, at += 16) r.ack[i].id = get64(b + at), r.ack[i].sess = get32(b + at + 8), r.ack[i].seq = get32(b + at + 12);
+    if (!keys_ok(&r)) return 0;
+    *m = r;
+    return 1;
+}
+
+static int key_ok(const CoopKeyMsg *m) {
+    return m->sess && m->seq && m->hash && m->delta && m->delta >= -COOP_KEYS_MAX && m->delta <= COOP_KEYS_MAX;
+}
+
+size_t coop_key_pack(const CoopKeyMsg *m, uint8_t *out, size_t cap) {
+    if (!key_ok(m) || cap < COOP_KEY_MSG) return 0;
+    out[0] = COOP_KEY_VERSION;
+    put32(out + 1, m->sess), put32(out + 5, m->seq), put32(out + 9, m->hash);
+    out[13] = (uint8_t)m->delta;
+    return COOP_KEY_MSG;
+}
+
+int coop_key_parse(const uint8_t *b, size_t n, CoopKeyMsg *m) {
+    memset(m, 0, sizeof *m);
+    if (n != COOP_KEY_MSG || b[0] != COOP_KEY_VERSION) return 0;
+    CoopKeyMsg r = {.sess = get32(b + 1), .seq = get32(b + 5), .hash = get32(b + 9), .delta = (int8_t)b[13]};
+    if (!key_ok(&r)) return 0;
+    *m = r;
+    return 1;
+}
+
 // ---- any kind
 
 size_t coop_ext_wire_repack(uint8_t kind, const uint8_t *b, size_t n, uint8_t *out, size_t cap) {
@@ -436,6 +505,14 @@ size_t coop_ext_wire_repack(uint8_t kind, const uint8_t *b, size_t n, uint8_t *o
     case COOP_K_COLOURS: {
         CoopColoursMsg m;
         return coop_colours_parse(b, n, &m) ? coop_colours_pack(&m, out, cap) : 0;
+    }
+    case COOP_K_KEYS: {
+        CoopKeysMsg m;
+        return coop_keys_parse(b, n, &m) ? coop_keys_pack(&m, out, cap) : 0;
+    }
+    case COOP_K_KEY: {
+        CoopKeyMsg m;
+        return coop_key_parse(b, n, &m) ? coop_key_pack(&m, out, cap) : 0;
     }
     }
     return 0;

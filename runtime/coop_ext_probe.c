@@ -147,6 +147,22 @@ static int fields_ok(int kind, const uint8_t *b, size_t n, const Toks *k) {
             if (m.e[i].id != num(k, 4 + 2 * i) || m.e[i].colour != num(k, 5 + 2 * i)) return 0;
         return 1;
     }
+    case COOP_K_KEYS: {
+        CoopKeysMsg m;
+        if (!coop_keys_parse(b, n, &m) || k->n != 6 + 2 * m.n + 3 * m.nack || m.serial != num(k, 3) || m.n != num(k, 4) ||
+            m.nack != num(k, 5 + 2 * m.n))
+            return 0;
+        for (int i = 0; i < m.n; i++)
+            if (m.d[i].hash != num(k, 5 + 2 * i) || m.d[i].keys != num(k, 6 + 2 * i)) return 0;
+        for (int i = 0, at = 6 + 2 * m.n; i < m.nack; i++, at += 3)
+            if (m.ack[i].id != num(k, at) || m.ack[i].sess != num(k, at + 1) || m.ack[i].seq != num(k, at + 2)) return 0;
+        return 1;
+    }
+    case COOP_K_KEY: {
+        CoopKeyMsg m;
+        return coop_key_parse(b, n, &m) && k->n == 7 && m.sess == num(k, 3) && m.seq == num(k, 4) && m.hash == num(k, 5) &&
+               m.delta == strtol(tok(k, 6), NULL, 10);
+    }
     }
     return 0;
 }
@@ -337,6 +353,42 @@ static void probe_packers(void) {
     CHECK(!coop_colours_pack(&mb, out, sizeof out), "a COLOURS with one id twice packs");
     mb = m, mb.e[1].colour = COOP_COLOUR_RED;
     CHECK(!coop_colours_pack(&mb, out, sizeof out), "a COLOURS with one colour twice packs");
+
+    CoopKeysMsg ky = {.serial = 7, .n = 2, .nack = 1, .d = {{0x7dd79d10, 3}, {0x90237092, 0}}, .ack = {{21, 5, 9}}};
+    CHECK(coop_keys_pack(&ky, out, sizeof out) == 33, "a KEYS of two counts and one ack packs");
+    CoopKeysMsg kx = ky;
+    kx.n = COOP_KEYS_DUNGEONS + 1;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS of 17 counts packs");
+    kx = ky, kx.nack = COOP_PLAYERS + 1;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS of 5 acks packs");
+    kx = ky, kx.d[0].keys = COOP_KEYS_MAX + 1;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS of 16 keys packs");
+    kx = ky, kx.d[1].hash = 0;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS of hash 0 packs");
+    kx = ky, kx.d[1].hash = kx.d[0].hash;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS with one counter twice packs");
+    kx = ky, kx.ack[0].id = 0;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS ack of id 0 packs");
+    kx = ky, kx.ack[0].sess = 0;
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS ack of sess 0 packs");
+    kx = ky, kx.nack = 2, kx.ack[1] = kx.ack[0];
+    CHECK(!coop_keys_pack(&kx, out, sizeof out), "a KEYS with one player's ack twice packs");
+    CHECK(!coop_keys_pack(&ky, out, 32), "a KEYS packs into too little room");
+    CoopKeyMsg ke = {.sess = 5, .seq = 1, .hash = 0x7dd79d10, .delta = -1};
+    CHECK(coop_key_pack(&ke, out, sizeof out) == COOP_KEY_MSG, "a KEY packs");
+    CoopKeyMsg kf = ke;
+    kf.delta = 0;
+    CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of no change packs");
+    kf = ke, kf.delta = COOP_KEYS_MAX + 1;
+    CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of 16 keys packs");
+    kf = ke, kf.delta = -COOP_KEYS_MAX - 1;
+    CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of -16 keys packs");
+    kf = ke, kf.sess = 0;
+    CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of sess 0 packs");
+    kf = ke, kf.seq = 0;
+    CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of seq 0 packs");
+    kf = ke, kf.hash = 0;
+    CHECK(!coop_key_pack(&kf, out, sizeof out), "a KEY of hash 0 packs");
 }
 
 // ---- random
@@ -416,6 +468,29 @@ static size_t rnd_message(int kind, uint8_t *out, size_t cap) {
             if (m.e[i].id == m.e[0].id) m.e[i].id++;
         return coop_colours_pack(&m, out, cap);
     }
+    case COOP_K_KEYS: {
+        CoopKeysMsg m;
+        memset(&m, 0, sizeof m);
+        m.serial = rnd(), m.n = (uint8_t)rnd_below(COOP_KEYS_DUNGEONS + 1), m.nack = (uint8_t)rnd_below(COOP_PLAYERS + 1);
+        for (int i = 0; i < m.n; i++) {   // distinct hashes, none 0
+            uint32_t h = rnd();
+            for (int again = 1; again; h += again) {
+                again = !h;
+                for (int j = 0; j < i; j++) again |= m.d[j].hash == h;
+            }
+            m.d[i].hash = h, m.d[i].keys = (uint8_t)rnd_below(COOP_KEYS_MAX + 1);
+        }
+        for (int i = 0; i < m.nack; i++)
+            m.ack[i].id = ((uint64_t)rnd() << 32 | rnd()) + (uint64_t)i * 0x1000000001ull + 1, m.ack[i].sess = rnd() | 1, m.ack[i].seq = rnd();
+        for (int i = 1; i < m.nack; i++)
+            if (m.ack[i].id == m.ack[0].id) m.ack[i].id++;
+        return coop_keys_pack(&m, out, cap);
+    }
+    case COOP_K_KEY: {
+        int d = (int)rnd_below(2 * COOP_KEYS_MAX) - COOP_KEYS_MAX;   // -15..14, then 0 is 15
+        CoopKeyMsg m = {rnd() | 1, rnd() | 2, rnd() | 4, (int8_t)(d ? d : COOP_KEYS_MAX)};
+        return coop_key_pack(&m, out, cap);
+    }
     }
     return 0;
 }
@@ -463,6 +538,7 @@ static void probe_fresh(void) {
     s.last = 0xffffffffu;
     CHECK(coop_pos_fresh(&s, 2, 0, 5000) == 1, "the counter's wrap is newer");
     CHECK(!strcmp(coop_ext_kind_name(COOP_K_KILL), "KILL") && !strcmp(coop_ext_kind_name(COOP_K_COLOURS), "COLOURS") &&
+          !strcmp(coop_ext_kind_name(COOP_K_KEYS), "KEYS") && !strcmp(coop_ext_kind_name(COOP_K_KEY), "KEY") &&
           !strcmp(coop_ext_kind_name(COOP_K_EXT_END), "?") && !strcmp(coop_ext_kind_name(0x3f), "?"), "the kinds' names");
 }
 
