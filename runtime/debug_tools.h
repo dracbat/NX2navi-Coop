@@ -41,6 +41,11 @@ const char *dbg_event_name(int i);
 void dbg_event_start(const char *name);
 int dbg_busy(void);
 void dbg_status(char out[160]);
+// Co-op cutscenes (coop_cutscene.c): a teleport to the start position of area nearest to near (metres;
+// NULL: the area's first), with boot ("" none) reserved as the event the game plays when Link arrives (the game data
+// text Sequence_ReservedBootEventName, which the plain teleport leaves empty). While an event plays after the arrival,
+// the teleport's watch for a fall stands aside (a scene may move Link anywhere).
+void dbg_warp_near(const char *area, const float near[3], const char *boot);
 
 // The free camera: the game draws from a camera of the menu's instead of its own. With sticks on, the pad flies it and
 // Link stands; with sticks off it stays where it is and the pad plays the game. speed in metres a second.

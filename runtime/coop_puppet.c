@@ -49,6 +49,7 @@
 #include "coop_offer.h"
 #include "coop_puppet.h"
 #include "coop_kill.h"
+#include "coop_cutscene.h"
 #include "coop_tags.h"
 #include "host.h"
 #include "platform/platform.h"
@@ -1617,12 +1618,15 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
         int trusted = shown >> id & 1;
         int heard = others && id != self && trusted && r[id].n && now - r[id].recv_ms[r[id].head] < SILENT_MS;
         if (heard) remote_pose(&r[id], (uint32_t)now, &pose);
-        int want = heard && player && area[0] && (pose.flags & COOP_POS_IN_WORLD) && !strcmp(pose.area, area);
+        int here = heard && player && area[0] && (pose.flags & COOP_POS_IN_WORLD) && !strcmp(pose.area, area);
+        int scene = here && coop_cutscene_hides_puppets();   // no puppet stands in a story cutscene here
+        int want = here && !scene;
         char name[64] = "";
         if (want) puppet_name(name, sizeof name, pose.flags & COOP_POS_ADULT);
         if ((p->state == SP_ASKED || p->state == SP_FOLLOW) && (!want || strcmp(p->s.text, name))) {
             rt_log("coop: puppet: member %d's puppet goes (%s)", id,
-                   !trusted ? "not accepted or not identified" : !heard ? "not heard" : !want ? "not in this area" : "other age");
+                   !trusted ? "not accepted or not identified" : !heard ? "not heard" : scene ? "a cutscene plays here"
+                   : !want ? "not in this area" : "other age");
             puppet_release(c, p);
         }
         if (want && p->state != SP_ASKED && p->state != SP_FOLLOW && (p->state == SP_WAIT || P.frames - p->asked_frame > 120)) {
@@ -2443,6 +2447,7 @@ static void puppet_frame(Cpu *c) {
         if (P.test == 2) shadow(c, player);
     }
     coop_kill_frame(c, player, area);   // kills, shared damage, difficulty (coop_kill.c): the area and Link's life component
+    coop_cutscene_frame(c, player, area);   // cutscenes together (coop_cutscene.c): the event manager, leader and follower
     // the other players (and, in a room, the room's colours: the local Link's too, even alone in it); once more after
     // leaving a room, to take its colours away
     if ((P.remote && (N.others || N.in_room)) || N.alive || RC.colour != COL_NONE) remotes(c, player, area);
@@ -2506,8 +2511,9 @@ void coop_puppet_present(void) {
     // otherwise
     // ... and while kills, shared damage or difficulty need the area and Link from it (coop_kill.c)
     int kills = coop_kill_present();
+    int cuts = coop_cutscene_present();   // ... and while cutscenes together have a room with others (or a test)
     int want = P.test != 0 || (P.remote && N.others) || N.alive || CL.self != COL_NONE || CL.dirty ||
-               (RC.on && N.in_room) || RC.colour != COL_NONE || kills;
+               (RC.on && N.in_room) || RC.colour != COL_NONE || kills || cuts;
     if (want != P.want) {
         P.want = want;
         rt_patch_switch(P.set, want);
@@ -2522,6 +2528,7 @@ void coop_puppet_init(void) {
     coop_on_message(COOP_K_POS, on_pos, NULL);
     coop_on_view(on_view, NULL);
     coop_kill_init();   // kills, shared damage, difficulty (coop_kill.c): its messages and hooks on the co-op thread
+    coop_cutscene_init();   // cutscenes together (coop_cutscene.c): its message and hooks on the co-op thread
 }
 
 __attribute__((constructor)) static void puppet_register(void) {

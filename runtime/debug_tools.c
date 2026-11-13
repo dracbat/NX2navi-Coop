@@ -544,6 +544,9 @@ enum { SETTLE_TICKS = 180, FALL_TRIES = 3, RETRY_EVERY = 30, RETRY_FOR = 1200, L
 static const float FALL_M = 25.0f;   // metres: an arrival's own drop is a step or two
 static struct {
     char area[64], pos[64], event[80];   // q_lock: what the menu asked for
+    char boot[80];                       // q_lock: dbg_warp_near's event at the arrival ("" none)
+    float near[3];                       // q_lock: dbg_warp_near's point: the area's start position nearest to it
+    int has_near;
     int state;                           // W_*
     uint64_t at;                         // the tick of the next step, or the one at which the wait for the arrival ends
     uint64_t retry_until, waited;        // W_ASKED: refused requests are tried again until then; ticks spent on the list
@@ -573,10 +576,46 @@ void dbg_warp(const char *area, const char *pos) {
     if (warp.state == W_IDLE && !warp.event[0] && area[0]) {
         snprintf(warp.area, sizeof warp.area, "%s", area);
         snprintf(warp.pos, sizeof warp.pos, "%s", pos);
+        warp.boot[0] = 0, warp.has_near = 0;
         warp.tries = 0, warp.retry_until = 0, warp.waited = 0, warp.at = 0;
         warp.state = W_ASKED;
     }
     plat_mutex_unlock(&q_lock);
+}
+
+void dbg_warp_near(const char *area, const float near[3], const char *boot) {
+    plat_mutex_lock(&q_lock);
+    if (warp.state == W_IDLE && !warp.event[0] && area[0]) {
+        snprintf(warp.area, sizeof warp.area, "%s", area);
+        warp.pos[0] = 0;
+        snprintf(warp.boot, sizeof warp.boot, "%s", boot ? boot : "");
+        warp.has_near = near != NULL;
+        if (near) memcpy(warp.near, near, sizeof warp.near);
+        warp.tries = 0, warp.retry_until = 0, warp.waited = 0, warp.at = 0;
+        warp.state = W_ASKED;
+    }
+    plat_mutex_unlock(&q_lock);
+}
+
+// The start position of area nearest to p (those with coordinates), NULL when the area lists none with them.
+static const char *place_nearest(const char *area, const float p[3], float *dist) {
+    const char *best = NULL;
+    float bd = 0;
+    for (int i = 0, n = dbg_places(); i < n; i++) {
+        if (strcmp(places[i].area, area) || !places[i].has_xyz) continue;
+        float dx = places[i].xyz[0] - p[0], dy = places[i].xyz[1] - p[1], dz = places[i].xyz[2] - p[2];
+        float d = dx * dx + dy * dy + dz * dz;
+        if (!best || d < bd) best = places[i].pos, bd = d;
+    }
+    if (dist) *dist = best ? sqrtf(bd) : 0;
+    return best;
+}
+
+// The game plays an event: the event manager's main event (**[main+0x4c7e090] + 0x68) is set from its preparation to
+// its end.
+static int event_playing(void) {
+    uint64_t slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e090), mgr = slot ? rd_ptr(slot) : 0;
+    return mgr && rd_ptr(mgr + 0x68);
 }
 
 void dbg_event_start(const char *name) {
@@ -603,6 +642,18 @@ static void warp_tick(Cpu *c, uint64_t tick) {
         if (dbg_names(NULL) != 2 && warp.waited++ < LIST_WAIT) {
             dbg_flags_refresh(), dbg_names(NULL);
             return;
+        }
+        if (warp.has_near && dbg_places()) {   // dbg_warp_near: the start position nearest to the point asked for
+            float d = 0;
+            const char *best = place_nearest(warp.area, warp.near, &d);
+            if (best) {
+                rt_log("debug: the start position of %s nearest %.1f %.1f %.1f is %s (%.1f m)", warp.area, warp.near[0],
+                       warp.near[1], warp.near[2], best, d);
+                plat_mutex_lock(&q_lock);
+                snprintf(warp.pos, sizeof warp.pos, "%s", best);
+                plat_mutex_unlock(&q_lock);
+            }
+            warp.has_near = 0;
         }
         if (dbg_places() && !place_listed(warp.area, warp.pos)) {
             const char *first = place_after(warp.area, NULL);
@@ -632,7 +683,8 @@ static void warp_tick(Cpu *c, uint64_t tick) {
         // what the game's own script reserves (its actor's ReserveBancChange): the next area and the start position's
         // name, no event at the arrival, the event held during the change, a black fade, and the request itself
         int ok = text_set("Sequence_ReservedNextBanc", warp.area) && text_set("Sequence_ReservedNextStartPosName", warp.pos);
-        text_set("Sequence_ReservedBootEventName", "");
+        int boot = text_set("Sequence_ReservedBootEventName", warp.boot);   // "" but for dbg_warp_near's event
+        if (warp.boot[0]) rt_log("debug: the event at the arrival: %s (%s)", warp.boot, boot ? "reserved" : "the text is not there");
         text_set("Sequence_ReservedEventStarterName", "");
         if (ok) {
             rt_call(c, MOD_MAIN_BASE + 0x682b20, 3, gmd(), (uint64_t)1, (uint64_t)hash_of("Sequence_IsEventBancChangePause"));
@@ -658,7 +710,10 @@ static void warp_tick(Cpu *c, uint64_t tick) {
         }
     } else if (warp.state == W_SETTLE) {
         float p[3];
-        if (dbg_player_pos(p) && p[1] < warp.land - FALL_M) {
+        if (warp.boot[0] && event_playing()) {   // dbg_warp_near: a scene moves Link where it wants; no fall check
+            rt_log("debug: an event plays after the arrival in %s: the watch for a fall ends", warp.area);
+            warp.state = W_IDLE;
+        } else if (dbg_player_pos(p) && p[1] < warp.land - FALL_M) {
             const char *next = place_after(warp.area, warp.pos);
             if (warp.tries < FALL_TRIES && next && strcmp(next, warp.pos)) {
                 status_set("Link fell through the ground at %s: the next start position, %s...", warp.area, next);

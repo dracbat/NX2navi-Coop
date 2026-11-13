@@ -38,6 +38,7 @@
 #include "coop.h"
 #include "coop_game.h"
 #include "coop_state.h"
+#include "coop_cutscene.h"
 #include "fs.h"
 #include "platform/platform.h"
 
@@ -71,6 +72,11 @@ enum {
 #define F_MAGIC_SIZE 0x12d63a97u
 #define F_PLAY_CLOCK 0xe53eb6d1u // UInt: seconds played, advanced while the game runs (on the title screen too)
 #define F_LOADING 0xf5deef0au    // Bool: a save is being loaded
+// Dialog per player (NX2NAVI_COOP_DIALOG=shared for the old way): what a
+// player said to an NPC stays that player's. The struct of "talked once" markers (its members' flags) and the
+// HavePlayedEvent flags of the NPC talk events (coop_events_talk_flags, from the player's own event table) are left
+// out of the table, so they are neither sent nor taken. Sequence_IsChildhood (the era) stays shared.
+#define S_HAVE_TALKED 0xab601492u   // HaveTalked_Special
 #define PLAYER_PTR 0x7004e371d0ull   // [main+0x4e371d0] + 0x480: the Player actor, none before the first load
 
 // Scene changes in progress (Bool, not saved): nothing is read or written while one is set.
@@ -160,6 +166,11 @@ static struct {
     uint32_t schema;        // of the table: games merge only with the same
     unsigned rejected_seen, ignored_seen;
     uint64_t checked_at;
+    // dialog per player: the setting, and the flags the last table left out for it
+    int dialog_shared, said_dialog;
+    unsigned talk_struct, talk_events, talk_events_listed;
+    // cutscenes: apply() takes nothing from the room while a follower plays its copy of a scene
+    int hold, said_hold;
 
     // the gate (G.lock; open is read by the game thread without it): nothing from a room is applied before the player
     // accepted what the room is (the engine's offer: identities, rules and their key, the save) and a copy of the save
@@ -300,6 +311,11 @@ static int cmp_pool_last(const void *a, const void *b) {
     return coop_cat_is_pool(((const GFlag *)a)->cat) - coop_cat_is_pool(((const GFlag *)b)->cat);
 }
 
+static int cmp_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
 static int cmp_by_hash(const void *a, const void *b) {
     uint32_t x = G.flags[*(const int *)a].hash, y = G.flags[*(const int *)b].hash;
     return x < y ? -1 : x > y;
@@ -309,15 +325,25 @@ static int cmp_by_hash(const void *a, const void *b) {
 static int build_table(uint64_t mgr) {
     G.nflags = G.npools = 0;
     memset(G.count, 0, sizeof G.count);
-    HSet first_get = {0}, pouch = {0}, keys = {0}, capacity = {0};
-    HSet *sets[] = {&first_get, &pouch, &keys, &capacity};
-    for (int i = 0; i < 4; i++) {
-        sets[i]->cap = 1024;
+    HSet first_get = {0}, pouch = {0}, keys = {0}, capacity = {0}, talked = {0};
+    HSet *sets[] = {&first_get, &pouch, &keys, &capacity, &talked};
+    for (int i = 0; i < 5; i++) {
+        sets[i]->cap = i == 4 ? 8192 : 1024;   // the talk markers: some hundreds
         sets[i]->h = calloc(sets[i]->cap, sizeof *sets[i]->h);
     }
     uint64_t e;
     Walk w = {mgr, &first_get, 0};
     if ((e = struct_of(mgr, S_FIRST_GET))) members(e, add_member, &w);
+    // dialog per player: the talk markers' flags, and the NPC talk events' HavePlayedEvent flags (sorted)
+    const uint32_t *talk_ev = NULL;
+    int ntalk_ev = 0;
+    G.talk_struct = G.talk_events = 0;
+    if (!G.dialog_shared) {
+        w.set = &talked;
+        if ((e = struct_of(mgr, S_HAVE_TALKED))) members(e, add_member, &w);
+        ntalk_ev = coop_events_talk_flags(&talk_ev);
+    }
+    G.talk_events_listed = (unsigned)ntalk_ev;
     w.set = &pouch, w.want = M_STOCK;
     if ((e = struct_of(mgr, S_POUCH))) members(e, add_nested, &w);
     w.set = &keys, w.want = M_SMALL_KEYS;
@@ -341,6 +367,14 @@ static int build_table(uint64_t mgr) {
             uint64_t cap_addr = 0;
             if (!type) {
                 if (file != 0 || reset & RESET_TEMPORARY || !(reset & RESET_NEW_GAME) || IN(heart_reward_flags, h)) continue;
+                if (hset_has(&talked, h)) {   // dialog per player: neither sent nor taken
+                    G.talk_struct++;
+                    continue;
+                }
+                if (ntalk_ev && bsearch(&h, talk_ev, (size_t)ntalk_ev, sizeof *talk_ev, cmp_u32)) {
+                    G.talk_events++;
+                    continue;
+                }
                 cat = IN(song_flags, h) ? COOP_CAT_SONGS : hset_has(&first_get, h) ? COOP_CAT_ITEMS : COOP_CAT_PROGRESS;
                 inv = LD8(a + B_DEFAULT) != 0;
             } else if (h == F_RUPEES) {
@@ -367,7 +401,7 @@ static int build_table(uint64_t mgr) {
             G.count[cat]++;
         }
     }
-    for (int i = 0; i < 4; i++) free(sets[i]->h);
+    for (int i = 0; i < 5; i++) free(sets[i]->h);
     qsort(G.flags, (size_t)G.nflags, sizeof *G.flags, cmp_pool_last);   // the scan reads flags in slices, the pools every frame
     for (int i = 0; i < G.nflags; i++) G.npools += coop_cat_is_pool(G.flags[i].cat);
     free(G.by_hash);
@@ -1060,7 +1094,23 @@ static void bind(uint64_t mgr) {
            "ammunition counters; the room's rules decide which are shared",
            G.count[COOP_CAT_PROGRESS], G.count[COOP_CAT_ITEMS], G.count[COOP_CAT_SONGS], G.count[COOP_CAT_QUEST],
            G.count[COOP_CAT_KEYS], G.count[COOP_CAT_AMMO]);
+    if (G.dialog_shared)
+        rt_log("coop: dialog: shared (NX2NAVI_COOP_DIALOG=shared): the talk markers and the NPC talk events' flags go to the room");
+    else
+        rt_log("coop: dialog: per player: %u talk markers and %u NPC talk events' flags (of %u NPC talk events in the event "
+               "table) are kept out of the room; the era (Sequence_IsChildhood) stays shared", G.talk_struct, G.talk_events,
+               G.talk_events_listed);
 }
+
+// Cutscenes (coop_cutscene.c): while on, apply() takes nothing from the room (the values wait in the
+// engine, as during a scene change), so the leader's flags cannot change this world before or while its own copy of the
+// scene plays.
+void coop_game_hold(int on) {
+    __atomic_store_n(&G.hold, on != 0, __ATOMIC_RELEASE);
+}
+
+// The gate of the last present: a save is played, Link stands in the world, no load, no scene change, the clock runs.
+int coop_game_running(void) { return __atomic_load_n(&G.gate, __ATOMIC_ACQUIRE); }
 
 // Link stands in the world: the Player actor, [[main+0x4e371d0] + 0x480], exists (its name, [+0x20], reads "Player")
 // away from the origin (its position in metres at +0x31c). There is none on the title screen at the start, so this holds
@@ -1146,6 +1196,13 @@ static void run_test_aid(Cpu *c, uint64_t mgr) {
 static void apply(Cpu *c, uint64_t mgr) {
     CoopApply a[APPLY_PER_FRAME];
     if (!__atomic_load_n(&G.open, __ATOMIC_ACQUIRE)) return;   // not accepted, or no copy of the save yet: values wait
+    int hold = __atomic_load_n(&G.hold, __ATOMIC_ACQUIRE);
+    if (hold != G.said_hold) {
+        G.said_hold = hold;
+        rt_log("coop: sync: %s", hold ? "held while this game plays its copy of a scene: the room's values wait"
+                                      : "the hold ends: the room's values are taken again");
+    }
+    if (hold) return;
     if (!plat_mutex_trylock(&G.lock)) return;   // the coop thread has the engine: nothing is applied this frame
     int n = coop_sync_take(G.eng, a, APPLY_PER_FRAME);
     plat_mutex_unlock(&G.lock);
@@ -1216,6 +1273,16 @@ void coop_present(Cpu *c) {
         G.cfg_seen = v;
         G.on = cfg_bool("NX2NAVI_COOP");
         if (G.on) read_test_aid();
+        const char *dv = cfg_get("NX2NAVI_COOP_DIALOG");   // own (default) | shared
+        int shared = dv && !strcmp(dv, "shared");
+        if (G.on && (shared != G.dialog_shared || !G.said_dialog))
+            rt_log("coop: dialog: %s (NX2NAVI_COOP_DIALOG='%s')", shared ? "shared" : "per player", dv ? dv : "");
+        if (shared != G.dialog_shared && G.nflags) {   // the next bind builds the table again
+            G.nflags = 0;
+            unbind("the dialog setting changed");
+        }
+        G.dialog_shared = shared;
+        G.said_dialog |= G.on;
     }
     if (!G.on) return;
     if (!RT_V111) {
@@ -1231,6 +1298,7 @@ void coop_present(Cpu *c) {
     }
     if (G.bound && (mgr != G.mgr || LD64(mgr + C_BOOL + CN_ENTRIES) != G.bool_entries || LD64(mgr + C_INT + CN_ENTRIES) != G.int_entries))
         unbind("the game made its flags anew");
+    if (!G.dialog_shared && coop_events_state() != 2) return;   // dialog per player: the event table first (a second)
     if (!gate(mgr)) return;
     if (!G.bound) bind(mgr);
     if (!G.bound) return;

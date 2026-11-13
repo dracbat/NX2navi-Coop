@@ -20,3 +20,8 @@ void coop_present(Cpu *c);
 // fs_host.c, at every RomFS file open on any thread: notes the start of the title screen, after which sync waits for a
 // save to be loaded. With COOP off it reads one value and returns.
 void coop_game_rom_open(const char *path);
+// Cutscenes (coop_cutscene.c), any thread: on, the room's values wait instead of being applied (a follower
+// plays its own copy of a scene); the sync's gate at the last present (a save is played, Link in the world, no load or
+// scene change, the clock runs).
+void coop_game_hold(int on);
+int coop_game_running(void);
