@@ -64,9 +64,10 @@ rid of someone, the host removes them; to be sure, leave and create a new room.
   contents, the trade sequence, the equipment worn, life and magic, and their talks with NPCs (below, "Dialog").
 - **Small keys are the room's** while *Shared small keys* is on (it is, by default, with *Share progress*): one count
   for each dungeon, kept by the room's host. A key anyone picks up is everyone's, and a locked door anyone opens uses up
-  a key for everyone, as the door is open for everyone. A player who joins takes the room's counts, whatever their own
-  save had; when the host leaves, the next host carries on from the counts it had. Off, or with a host who has it off,
-  each player's small keys are their own.
+  a key for everyone, as the door is open for everyone. A door costs the room one key even when two players open it,
+  each in their own world, before it is open in the other's: the second gets their key back. A player who joins takes
+  the room's counts, whatever their own save had; when the host leaves, the next host carries on from the counts it
+  had. Off, or with a host who has it off, each player's small keys are their own.
 - **Nothing is undone.** Leaving a room keeps what was shared. A player in the room plays with you: what they do in
   their world happens in yours, and a game that wants to can send progress it did not play for. Join rooms of people
   you trust with your save, as you would hand them your controller, and go back to the copy if you regret it.
@@ -264,6 +265,11 @@ the time of day, the era and the small keys, each sent at once to a player who c
 host carries on from what it last had. Progress has no arbiter, because every shared value only ever rises: two games
 that set the same flag agree whatever the order. A jump of the time or a change of era carries an order that each one
 makes one higher, so the newest wins in every game, and an order far from the room's is taken from the host alone.
+The small keys are counted one key a door: each key a player picks up or uses goes to the host with the place where
+their Link stood, and a key used within 3.4 m of where the room already paid one, in the same dungeon, opened that
+door again in another world, so the host takes it without counting it, and its next counts give that player the key
+back. The doors with small-key locks stand at least 6.8 m apart in every dungeon. A new host starts with no such
+places.
 
 ## Checks
 
