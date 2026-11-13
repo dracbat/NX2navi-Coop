@@ -1708,8 +1708,9 @@ static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GA
                                               UI_MENU_TAB_CONTROLS, UI_MENU_TAB_COOP};
 static int g_tab;               // the tab shown
 
-// The tabs the menu shows: the Co-op tab is a beta, shown only with coop_beta = 1 in nx2navi.ini (NX2NAVI_COOP_BETA),
-// which no menu row sets. Co-op itself is untouched by it: coop = 1 still runs a session (docs/coop.md).
+// The tabs the menu shows: the Co-op tab is shown while coop_beta is 1 (NX2NAVI_COOP_BETA, the default in NX2navi
+// Co-op; coop_beta = 0 in nx2navi.ini hides it), which no menu row sets. Co-op itself is untouched by it: coop = 1
+// still runs a session (docs/coop.md).
 static int tabs_shown(void) { return cfg_bool("NX2NAVI_COOP_BETA") ? TAB_COUNT : TAB_COOP; }
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
 static int g_focus_page = -1;   // this tab's first row takes the cursor once it is shown; -1 none

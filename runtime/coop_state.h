@@ -87,9 +87,14 @@ int coop_cat_is_pool(int cat);         // keys, rupees, ammo: own | pool; the ot
 void coop_rules_default(CoopRules *r);
 // Makes r a set the engine can run: a mode a category does not have becomes its default; with progress per player, keys
 // are per player too (a pool would pay twice for a key each world still holds); with progress shared, items, songs and
-// quest items are shared (per player, the one who took one from the shared world would leave the others without it).
-// The categories it changed, as a bit mask.
+// quest items are shared (per player, the one who took one from the shared world would leave the others without it);
+// while own wallets are on, rupees and ammunition are per player. The categories it changed, as a bit mask.
 unsigned coop_rules_normalize(CoopRules *r);
+// NX2navi Co-op: every player keeps their own rupees and ammunition, whatever this game's settings or a room's charter
+// ask for (coop_rules_normalize). On by default; off (0) the rules decide again: NX2NAVI_COOP_WALLETS=rules
+// (coop_game.c), and the checks of the pools (coop_sync_probe.c, tests/coop_page_check.cpp).
+void coop_rules_own_wallets(int on);
+int coop_rules_own_wallets_on(void);
 // "progress shared, items shared, ..." into out.
 void coop_rules_text(const CoopRules *r, char *out, size_t cap);
 

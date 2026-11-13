@@ -322,6 +322,11 @@ void coop_rules_default(CoopRules *r) {
     r->mode[COOP_CAT_KEYS] = COOP_MODE_POOL;
 }
 
+// Own wallets (coop_rules_own_wallets): set by the co-op thread, read there and by the menu's Co-op tab.
+static int own_wallets = 1;
+void coop_rules_own_wallets(int on) { __atomic_store_n(&own_wallets, on != 0, __ATOMIC_RELAXED); }
+int coop_rules_own_wallets_on(void) { return __atomic_load_n(&own_wallets, __ATOMIC_RELAXED); }
+
 unsigned coop_rules_normalize(CoopRules *r) {
     CoopRules d;
     coop_rules_default(&d);
@@ -330,6 +335,11 @@ unsigned coop_rules_normalize(CoopRules *r) {
         int m = r->mode[c];
         int ok = coop_cat_is_pool(c) ? m == COOP_MODE_OWN || m == COOP_MODE_POOL : m == COOP_MODE_OWN || m == COOP_MODE_SHARED;
         if (!ok) r->mode[c] = d.mode[c], changed |= 1u << c;
+    }
+    if (coop_rules_own_wallets_on()) {   // every player's rupees and ammunition stay their own: no pool of either
+        static const int wallets[] = {COOP_CAT_RUPEES, COOP_CAT_AMMO};
+        for (int i = 0; i < 2; i++)
+            if (r->mode[wallets[i]] != COOP_MODE_OWN) r->mode[wallets[i]] = COOP_MODE_OWN, changed |= 1u << wallets[i];
     }
     if (r->mode[COOP_CAT_PROGRESS] == COOP_MODE_OWN) {
         if (r->mode[COOP_CAT_KEYS] != COOP_MODE_OWN) r->mode[COOP_CAT_KEYS] = COOP_MODE_OWN, changed |= 1u << COOP_CAT_KEYS;

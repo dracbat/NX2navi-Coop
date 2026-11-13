@@ -425,9 +425,25 @@ static int mode_of(const char *key, int pool) {
     return pool ? (!strcmp(v, "pool") ? COOP_MODE_POOL : COOP_MODE_OWN) : (!strcmp(v, "shared") ? COOP_MODE_SHARED : COOP_MODE_OWN);
 }
 
+// NX2navi Co-op keeps every player's rupees and ammunition their own (coop_state.c coop_rules_normalize);
+// NX2NAVI_COOP_WALLETS=rules (no menu row) lets the room's rules decide them again. Read at start and with the rules,
+// logged when it changes.
+static void read_wallets(void) {
+    static int logged = -1;
+    const char *w = cfg_get("NX2NAVI_COOP_WALLETS");
+    int own = !(w && !strcmp(w, "rules"));
+    coop_rules_own_wallets(own);
+    if (own != logged) {
+        logged = own;
+        rt_log(own ? "coop: wallets: every player keeps their own rupees and ammunition"
+                   : "coop: wallets: the room's rules decide the rupees and ammunition (NX2NAVI_COOP_WALLETS=rules)");
+    }
+}
+
 static void read_rules(CoopRules *r) {
     static const char *const keys[COOP_CAT_N] = {"NX2NAVI_COOP_PROGRESS", "NX2NAVI_COOP_ITEMS", "NX2NAVI_COOP_SONGS", "NX2NAVI_COOP_QUEST",
                                                  "NX2NAVI_COOP_KEYS", "NX2NAVI_COOP_RUPEES", "NX2NAVI_COOP_AMMO"};
+    read_wallets();
     coop_rules_default(r);
     for (int c = 0; c < COOP_CAT_N; c++) r->mode[c] = (uint8_t)mode_of(keys[c], coop_cat_is_pool(c));
     CoopRules as_set = *r;
@@ -1004,6 +1020,7 @@ void coop_game_init(void) {
     plat_mutex_init(&G.lock);
     plat_mutex_init(&G.pub_lock);
     G.cfg_seen = ~0u;
+    read_wallets();   // the Co-op tab shows the rules with it before any session reads them
     coop_on_message(COOP_K_DIGEST, on_message, (void *)(uintptr_t)COOP_K_DIGEST);
     coop_on_message(COOP_K_SECTION, on_message, (void *)(uintptr_t)COOP_K_SECTION);
     coop_on_view(on_view, NULL);

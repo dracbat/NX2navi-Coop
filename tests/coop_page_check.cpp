@@ -540,6 +540,16 @@ static void check_maker(const Input &in) {
     in_room_as(true, 0x2222223u, true);
     counters_clear();
     frames(4);
+    // own wallets, the game's default: the rupees row is greyed and its value stays own
+    coop_rules_own_wallets(1);
+    frames(2);
+    row("NX2NAVI_COOP_RUPEES");
+    tap(in.right);
+    CHECK(!strcmp(cfg_value("NX2NAVI_COOP_RUPEES"), "own"), "the maker's rupees with own wallets: %s",
+          cfg_value("NX2NAVI_COOP_RUPEES"));
+    printf("  own wallets: rupees stay %s\n", cfg_value("NX2NAVI_COOP_RUPEES"));
+    coop_rules_own_wallets(0);
+    frames(2);
     // a rule the maker changes: rupees into a pool; items cannot leave a shared world (greyed)
     row("NX2NAVI_COOP_RUPEES");
     tap(in.right);
@@ -824,6 +834,7 @@ int main(void) {
     frames(2);
     g_fault = getenv("COOP_PAGE_FAULT") && atoi(getenv("COOP_PAGE_FAULT"));
     if (g_fault) printf("deliberate fault: each window that acts on the room opens with Right pressed\n");
+    coop_rules_own_wallets(0);   // the rules as the engine has them; check_maker looks at own wallets on its own
 
     check_fields_by_keyboard();
     check_join_by_pad();

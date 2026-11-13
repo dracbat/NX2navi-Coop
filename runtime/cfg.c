@@ -83,6 +83,7 @@ static const char *const known[] = {
     "VMA_BLOCK_MB", "SYNC_WAKE_ALL", "LOG_ASYNC", "DEVICE_LOST_AT", "STAGING_FAIL_AT", "VRAM_BALLAST_MB",
     "COOP", "COOP_BETA", "COOP_NAME", "COOP_SERVER", "COOP_PORT", "COOP_ROOM", "COOP_AUTO", "COOP_DROP",   // co-op (coop.c); the last three have no menu row
     "COOP_PROGRESS", "COOP_ITEMS", "COOP_SONGS", "COOP_QUEST", "COOP_KEYS", "COOP_RUPEES", "COOP_AMMO",   // the room's rules (coop_game.c)
+    "COOP_WALLETS",    // rules: the room's rules decide rupees and ammunition, which are otherwise every player's own (coop_game.c); no menu row
     "COOP_TEST_SET",   // test: sets flags by hash at given frames (coop_game.c); no menu row
     "COOP_ACCEPT",     // accepts a co-op room's members and rules before anything of it is applied (coop_game.c)
     "COOP_REMOVE",     // the room's maker removes a member: its id (coop.c), or a key's fingerprint (coop_game.c); no row (the Co-op tab's Remove)
@@ -251,8 +252,9 @@ static const CfgMeta metas[] = {
     {"DISCORD_IMAGE", NX2NAVI_DISCORD_IMAGE_DEFAULT, NULL, LIVE},
     // Co-op (coop.c): off until the player turns it on. The server is host[:port] of a relay (tools/coop_relay.py), and has no
     // default until coop_app.h names one; the name is at most 24 bytes, empty for Player-xxxx; the port is the local UDP port
-    // (0: any). COOP_ROOM, COOP_AUTO, COOP_DROP and COOP_TEST_SET are read with cfg_get, no row.
-    {"COOP", "0", "0|1", LIVE}, {"COOP_BETA", "0", "0|1", LIVE}, {"COOP_NAME", "", NULL, LIVE},
+    // (0: any). COOP_ROOM, COOP_AUTO, COOP_DROP and COOP_TEST_SET are read with cfg_get, no row. NX2navi Co-op shows the
+    // menu's Co-op tab by default (COOP_BETA 1).
+    {"COOP", "0", "0|1", LIVE}, {"COOP_BETA", "1", "0|1", LIVE}, {"COOP_NAME", "", NULL, LIVE},
     {"COOP_SERVER", NX2NAVI_COOP_SERVER_DEFAULT, NULL, LIVE}, {"COOP_PORT", "0", "0..65535", RESTART},
     // The rules a room made by this player syncs by (coop_state.h, docs/coop.md); a joiner's own are not used in the room.
     {"COOP_PROGRESS", "shared", "shared|own", LIVE}, {"COOP_ITEMS", "shared", "shared|own", LIVE},

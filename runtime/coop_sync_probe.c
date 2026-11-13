@@ -632,6 +632,14 @@ static void probe_rules(void) {
     unsigned changed = coop_rules_normalize(&r);
     CHECK(r.mode[COOP_CAT_SONGS] == COOP_MODE_SHARED && r.mode[COOP_CAT_RUPEES] == COOP_MODE_OWN &&
               changed == (1u << COOP_CAT_SONGS | 1u << COOP_CAT_RUPEES), "normalize: songs shared with progress shared, rupees own");
+    // own wallets (the game's default; this probe checks the pools with them off): no pool of rupees or ammunition
+    coop_rules_own_wallets(1);
+    coop_rules_default(&r);
+    r.mode[COOP_CAT_RUPEES] = r.mode[COOP_CAT_AMMO] = COOP_MODE_POOL;
+    changed = coop_rules_normalize(&r);
+    coop_rules_own_wallets(0);
+    CHECK(r.mode[COOP_CAT_RUPEES] == COOP_MODE_OWN && r.mode[COOP_CAT_AMMO] == COOP_MODE_OWN && r.mode[COOP_CAT_KEYS] == COOP_MODE_POOL &&
+              changed == (1u << COOP_CAT_RUPEES | 1u << COOP_CAT_AMMO), "normalize: own wallets, rupees and ammunition own, keys still a pool");
     printf("coop-probe: sync rules: the maker's rules hold, pools spend and gain at once, rules switch mid-session\n");
 }
 
@@ -3452,6 +3460,7 @@ static void probe_h7_moved_key(void) {
 
 int probe_coop_sync(void) {
     fails = 0;
+    coop_rules_own_wallets(0);   // the pools of rupees and ammunition are checked as the engine runs them
     if (getenv("NX2NAVI_COOP_ADVERSARY")) {
         probe_adversary();
         return fails;

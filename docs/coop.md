@@ -11,6 +11,11 @@ world, and where your Link is never leaves your PC ("Other players in the world"
 **Co-op is a beta in 0.8.0.** The menu shows its Co-op tab only with `coop_beta = 1` under `[coop]` in `nx2navi.ini`;
 no menu row sets it. Everything below is as it is with the tab shown.
 
+**NX2navi Co-op** shows the tab by default (`coop_beta = 1`), keeps every player's rupees and ammunition their own
+whatever the settings or a room's rules ask for (`coop_wallets = rules` gives the rules their say again;
+`runtime/coop_state.c` coop_rules_normalize), and shows the other players as Links of their own while
+`coop_puppets = 1` (`runtime/coop_puppet.c`; still in testing, off by default).
+
 ## What joining a room means for your save
 
 Read this before you join a room.
@@ -271,8 +276,8 @@ state, so the new offer and the copy are the answer.
 | songs | `coop_songs` | `shared`, `own` | |
 | quest | `coop_quest` | `shared`, `own` | medallions, spiritual stones, the stone of agony, the gerudo card |
 | keys | `coop_keys` | `pool`, `own` | small keys, per dungeon |
-| rupees | `coop_rupees` | `own`, `pool` | |
-| ammo | `coop_ammo` | `own`, `pool` | bombs, bombchus, arrows, deku nuts, seeds and sticks, magic beans |
+| rupees | `coop_rupees` | `own`, `pool` | always `own` in NX2navi Co-op unless `coop_wallets = rules` |
+| ammo | `coop_ammo` | `own`, `pool` | bombs, bombchus, arrows, deku nuts, seeds and sticks, magic beans; as rupees in NX2navi Co-op |
 
 - `shared`: a flag set by anyone stays set for everyone; of a count (an item, an upgrade) the highest wins.
 - `own`: not synced; switching to it stops the merge and keeps what was merged.

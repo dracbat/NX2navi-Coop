@@ -233,7 +233,8 @@ static void offer_lines(const CoopOffer &o, char *who, size_t who_cap, char *sha
 
 // The rules, a row each in coop_state.h's order. editable (not in a room, or this player made it): the rows change this
 // player's settings, which are the rules of a room it makes; a category the others force (items, songs and quest
-// items follow Progress shared, keys follow Progress own: coop_rules_normalize) is greyed out with its value in effect.
+// items follow Progress shared, keys follow Progress own, rupees and ammunition stay each player's own while own
+// wallets are on: coop_rules_normalize) is greyed out with its value in effect.
 // Otherwise the room's rules, to read.
 static void rule_rows(bool editable, const CoopRules *room) {
     CoopRules r;
@@ -265,7 +266,8 @@ static void rule_rows(bool editable, const CoopRules *room) {
         CoopRules t = r;   // the other mode, as the engine would take it: a forced category does not keep it
         t.mode[c] = (uint8_t)modes[1 - cur];
         coop_rules_normalize(&t);
-        if (t.mode[c] != modes[1 - cur]) opt_disable_next(UI_MENU_COOP_RULE_FOLLOWS);
+        const bool wallet = (c == COOP_CAT_RUPEES || c == COOP_CAT_AMMO) && coop_rules_own_wallets_on();
+        if (t.mode[c] != modes[1 - cur]) opt_disable_next(wallet ? UI_MENU_COOP_RULE_OWN_WALLET : UI_MENU_COOP_RULE_FOLLOWS);
         opt_choice_list(kRuleKeys[c], label, values, names, 2, desc, cur);
     }
 }
