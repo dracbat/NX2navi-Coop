@@ -1,5 +1,56 @@
 <p align="center"><img src="docs/images/navi.png" alt="NX2navi" width="160"></p>
 
+# NX2navi Co-op
+
+**NX2navi Co-op** is an unofficial build of NX2navi for playing *Ocarina of Time* together with friends: each player
+runs their own game and save, and the story is shared through a small relay server. It installs beside the official
+NX2navi and updates itself from this repository's releases. Nothing of the game is included: you need your own dump,
+as for NX2navi. Please do not report NX2navi Co-op's problems to the official NX2navi.
+
+### Install
+
+1. Download `NX2navi-Coop-Setup-<version>.exe` from this repository's [releases](../../releases), put it next to
+   your `.nup` dump of the game (version 1.1.1) and start it. The setup is not signed, so SmartScreen warns:
+   choose *More info* and *Run anyway*.
+2. The launcher builds the game on your PC (10 to 25 minutes, once) and starts it. It lives in its own folder
+   (`%LOCALAPPDATA%\Programs\NX2navi-Coop`) with its own shortcuts, *NX2navi Co-op*; an official NX2navi on the same
+   PC is left as it is, and either can be uninstalled from Settings > Apps without touching the other.
+3. New versions install through the launcher, as NX2navi's do.
+
+The requirements are NX2navi's ([Installing](#installing) below). Where the rest of this page names
+`NX2navi-Setup`, NX2navi Co-op's is `NX2navi-Coop-Setup`.
+
+### The relay
+
+The players' games meet on a relay: a small program that one person in the group runs and the others connect to over
+the internet (UDP port 24680). It only passes the games' sealed messages on: it cannot read them, never sees the
+room's secret, your game or your save, and keeps nothing on disk.
+
+- **The host** starts it in the NX2navi Co-op folder with
+  `python\python.exe -I app\<version>\tools\coop_relay.py` (or `python3 tools/coop_relay.py` from this repository on
+  any machine with Python 3), lets UDP port 24680 through the PC's firewall and, for friends elsewhere, forwards that
+  port on the router to the PC. It runs while the window stays open.
+- **Everyone** puts the host's address into the Co-op tab's *Relay address* (or `coop_server = <address>` under
+  `[coop]` in `nx2navi.ini`). Pass the address on privately, never in an issue or anywhere public.
+
+### Playing together
+
+1. Start the game and open the menu (F1, or Minus and Plus together on a gamepad): the **Co-op** tab. Turn *Co-op*
+   on, set *Your name* and the *Relay address*.
+2. One player chooses *Make a room* and sends the room's secret (`XXXXXX-XXXXXX-XXXXXX`, *Copy the secret*) to the
+   others in a private message. The others choose *Join a room* and paste it.
+3. Each player then accepts the room under *Accept or not*. Compare the key the tab shows with the one its owner reads
+   out to you first: nothing from the room reaches your save before you accept, and your save is copied to
+   `coop-backup` in the profile folder when you do.
+4. Shared by everyone: story progress (events, chests, doors, switches, bosses), items, songs and quest items; small
+   keys go into one pool per dungeon. Your own: rupees and ammunition, always, and where you are, your hearts and your
+   magic.
+5. Seeing each other is being tested: with `coop_puppets = 1` under `[coop]` in `nx2navi.ini`, the other players of
+   your room are shown in your world as Links of their own. The launcher makes the files for them from your own game
+   when it builds it (*Make the Co-op Players*).
+
+[docs/coop.md](docs/coop.md) explains rooms, the rules and what joining a room means for your save in full.
+
 # NX2navi
 
 **Join the official NX2navi update discord server: https://discord.com/invite/uf6gSrsPpq** 
