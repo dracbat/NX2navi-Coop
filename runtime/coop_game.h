@@ -25,3 +25,6 @@ void coop_game_rom_open(const char *path);
 // scene change, the clock runs).
 void coop_game_hold(int on);
 int coop_game_running(void);
+// The era (coop_cutscene.c), any thread: a counter that moves whenever the title screen comes back (another
+// save may be played next, so the era is read anew).
+unsigned coop_game_save_serial(void);

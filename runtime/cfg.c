@@ -97,6 +97,7 @@ static const char *const known[] = {
     "COOP_SCALE_HP", "COOP_SCALE_TAKEN", "COOP_SHARE_DENY", "COOP_KILL_TEST", "COOP_KILL_LOG",               // difficulty (coop_kill.c); no row
     "COOP_CUTSCENES", "COOP_CUTSCENE_BOOT", "COOP_CUTSCENE_RETURN", "COOP_CUTSCENE_BOSSES", "COOP_CUTSCENE_HIDE",   // cutscenes together,
     "COOP_CUTSCENE_TRACE", "COOP_CUTSCENE_TEST", "COOP_DIALOG", "COOP_TIME", "COOP_TIME_PROBE",   // dialog per player and the time of day (coop_cutscene.c, coop_game.c); no row
+    "COOP_ERA",   // the era: follow, scene, shared or own (coop_cutscene.c, coop_game.c); no row
     "COOP_RESET_POOLS",   // the room's maker resets the pools when it changes to a value other than 0 (coop_game.c); no row (the tab's Reset the pools)
 };
 

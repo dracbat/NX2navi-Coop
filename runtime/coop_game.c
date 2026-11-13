@@ -72,10 +72,15 @@ enum {
 #define F_MAGIC_SIZE 0x12d63a97u
 #define F_PLAY_CLOCK 0xe53eb6d1u // UInt: seconds played, advanced while the game runs (on the title screen too)
 #define F_LOADING 0xf5deef0au    // Bool: a save is being loaded
-// Dialog per player (NX2NAVI_COOP_DIALOG=shared for the old way): what a
-// player said to an NPC stays that player's. The struct of "talked once" markers (its members' flags) and the
-// HavePlayedEvent flags of the NPC talk events (coop_events_talk_flags, from the player's own event table) are left
-// out of the table, so they are neither sent nor taken. Sequence_IsChildhood (the era) stays shared.
+// Dialog per player (NX2NAVI_COOP_DIALOG=shared for the old way): what a player said to an NPC stays that player's.
+// The struct of "talked once" markers (its members' flags) and the HavePlayedEvent flags of the NPC talk events
+// (coop_events_talk_flags, from the player's own event table) are left out of the table, so they are neither sent nor
+// taken.
+// The era: Sequence_IsChildhood is left out of the table too, unless NX2NAVI_COOP_ERA=shared (the old way). Its
+// register only grew (child to adult), so a player who went back to child was made adult again at once; and the game
+// sets the flag itself from each area it loads (an area of the other era changes Link's age), so a flag pushed into a
+// world of the other era did not change the era there anyway. The era travels with the Master Sword scenes and the ERA
+// message instead (coop_cutscene.c, "the era").
 #define S_HAVE_TALKED 0xab601492u   // HaveTalked_Special
 #define PLAYER_PTR 0x7004e371d0ull   // [main+0x4e371d0] + 0x480: the Player actor, none before the first load
 
@@ -169,6 +174,8 @@ static struct {
     // dialog per player: the setting, and the flags the last table left out for it
     int dialog_shared, said_dialog;
     unsigned talk_struct, talk_events, talk_events_listed;
+    // the era: shared in the table (NX2NAVI_COOP_ERA=shared) or left out; whether the last table left it out
+    int era_shared, era_out;
     // cutscenes: apply() takes nothing from the room while a follower plays its copy of a scene
     int hold, said_hold;
 
@@ -324,6 +331,7 @@ static int cmp_by_hash(const void *a, const void *b) {
 // The classified table of the manager's flags (the header comment's rules). 0 when the database is not readable.
 static int build_table(uint64_t mgr) {
     G.nflags = G.npools = 0;
+    G.era_out = 0;
     memset(G.count, 0, sizeof G.count);
     HSet first_get = {0}, pouch = {0}, keys = {0}, capacity = {0}, talked = {0};
     HSet *sets[] = {&first_get, &pouch, &keys, &capacity, &talked};
@@ -373,6 +381,10 @@ static int build_table(uint64_t mgr) {
                 }
                 if (ntalk_ev && bsearch(&h, talk_ev, (size_t)ntalk_ev, sizeof *talk_ev, cmp_u32)) {
                     G.talk_events++;
+                    continue;
+                }
+                if (h == COOP_ERA_FLAG && !G.era_shared) {   // the era: neither sent nor taken (coop_cutscene.c)
+                    G.era_out = 1;
                     continue;
                 }
                 cat = IN(song_flags, h) ? COOP_CAT_SONGS : hset_has(&first_get, h) ? COOP_CAT_ITEMS : COOP_CAT_PROGRESS;
@@ -1098,8 +1110,14 @@ static void bind(uint64_t mgr) {
         rt_log("coop: dialog: shared (NX2NAVI_COOP_DIALOG=shared): the talk markers and the NPC talk events' flags go to the room");
     else
         rt_log("coop: dialog: per player: %u talk markers and %u NPC talk events' flags (of %u NPC talk events in the event "
-               "table) are kept out of the room; the era (Sequence_IsChildhood) stays shared", G.talk_struct, G.talk_events,
-               G.talk_events_listed);
+               "table) are kept out of the room", G.talk_struct, G.talk_events, G.talk_events_listed);
+    if (G.era_out)
+        rt_log("coop: era: Sequence_IsChildhood is kept out of progress sync (it goes back to child too): the era follows the "
+               "players through the Master Sword scenes and the ERA message (coop: era: lines)");
+    else
+        rt_log("coop: era: Sequence_IsChildhood %s", G.era_shared ? "is in progress sync (NX2NAVI_COOP_ERA=shared, the old way: "
+                                                                    "child to adult only)"
+                                                                  : "is not in this save's flags");
 }
 
 // Cutscenes (coop_cutscene.c): while on, apply() takes nothing from the room (the values wait in the
@@ -1133,6 +1151,12 @@ void coop_game_rom_open(const char *path) {
         plat_inc32(&title_starts);
 }
 
+// The title screen came back, so another save may be played next (the era is read anew: coop_cutscene.c). Not the play
+// clock's jumps: the game makes one at each change of era too (progress sync logs "another save was loaded" at a
+// teleport into Market_Adult), when the era must be read as a change.
+static volatile int32_t save_serial;
+unsigned coop_game_save_serial(void) { return (unsigned)plat_cas32(&save_serial, 0, 0); }
+
 // The game is being played: a save was loaded since the title screen, Link stands in the world, the clock runs, no save
 // is loading, no scene is changing. Notes a save change (unbind).
 static int gate(uint64_t mgr) {
@@ -1148,6 +1172,7 @@ static int gate(uint64_t mgr) {
         G.titles = titles;
         unbind("the title screen came back");
         G.loaded = 0;
+        plat_inc32(&save_serial);
     }
     uint32_t clock = LD32(G.clock_entry + I_CURRENT);
     int loading = G.loading_entry && LD8(G.loading_entry + B_CURRENT);
@@ -1283,6 +1308,12 @@ void coop_present(Cpu *c) {
         }
         G.dialog_shared = shared;
         G.said_dialog |= G.on;
+        int era_shared = coop_era_setting(NULL) == COOP_ERA_SHARED;   // NX2NAVI_COOP_ERA
+        if (era_shared != G.era_shared && G.nflags) {
+            G.nflags = 0;
+            unbind("the era setting changed");
+        }
+        G.era_shared = era_shared;
     }
     if (!G.on) return;
     if (!RT_V111) {
