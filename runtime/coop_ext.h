@@ -61,6 +61,9 @@ void coop_ext_view(CoopExtView *out);
 // so that no player can fill this game's log.
 void coop_ext_log(int seat, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
+// --probe-coop-ext (coop_ext_probe.c): the codecs of coop_ext_wire.h against tests/coop_ext_vectors.txt; no game files.
+int probe_coop_ext(void);
+
 #ifdef __cplusplus
 }
 #endif
