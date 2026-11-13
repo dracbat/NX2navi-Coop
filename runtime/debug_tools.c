@@ -540,7 +540,8 @@ static int event_request(Cpu *c, const char *name) {
 // W_SETTLE: Link arrived and is watched for a while; one who falls FALL_M below where he arrived has no ground under
 // him, and the change of area is asked again for the area's next start position (place_after), up to FALL_TRIES times.
 // The game refuses events while Link is in the air, so such a request is tried again every RETRY_EVERY ticks until
-// RETRY_FOR ticks have passed.
+// RETRY_FOR ticks have passed; a dbg_warp_near request is tried again so from the start (a menu, a jump or a swim
+// refuses it, and co-op asks for it whenever another player's scene comes).
 enum { W_IDLE, W_ASKED, W_EVENT, W_FLIGHT, W_SETTLE };
 enum { SETTLE_TICKS = 180, FALL_TRIES = 3, RETRY_EVERY = 30, RETRY_FOR = 1200, LIST_WAIT = 600 };
 static const float FALL_M = 25.0f;   // metres: an arrival's own drop is a step or two
@@ -549,6 +550,7 @@ static struct {
     char boot[80];                       // q_lock: dbg_warp_near's event at the arrival ("" none)
     float near[3];                       // q_lock: dbg_warp_near's point: the area's start position nearest to it
     int has_near;
+    int retry;                           // dbg_warp_near: a refusal is tried again for RETRY_FOR ticks
     int state;                           // W_*
     uint64_t at;                         // the tick of the next step, or the one at which the wait for the arrival ends
     uint64_t retry_until, waited;        // W_ASKED: refused requests are tried again until then; ticks spent on the list
@@ -561,8 +563,10 @@ static char status[160];                 // q_lock: the last thing that happened
 // way (atomic: co-op's gate reads it on the present thread)
 static uint64_t teleport_quiet_at;
 enum { TELEPORT_QUIET_MS = 8000 };
+static unsigned arrivals;                // dbg_arrivals (atomic)
 
 int dbg_teleport_recent(void) { return plat_now_ms() < __atomic_load_n(&teleport_quiet_at, __ATOMIC_ACQUIRE); }
+unsigned dbg_arrivals(void) { return __atomic_load_n(&arrivals, __ATOMIC_ACQUIRE); }
 
 static void status_set(const char *fmt, const char *a, const char *b) {
     plat_mutex_lock(&q_lock);
@@ -584,7 +588,7 @@ void dbg_warp(const char *area, const char *pos) {
     if (warp.state == W_IDLE && !warp.event[0] && area[0]) {
         snprintf(warp.area, sizeof warp.area, "%s", area);
         snprintf(warp.pos, sizeof warp.pos, "%s", pos);
-        warp.boot[0] = 0, warp.has_near = 0;
+        warp.boot[0] = 0, warp.has_near = 0, warp.retry = 0;
         warp.tries = 0, warp.retry_until = 0, warp.waited = 0, warp.at = 0;
         warp.state = W_ASKED;
         __atomic_store_n(&teleport_quiet_at, UINT64_MAX, __ATOMIC_RELEASE);
@@ -598,7 +602,7 @@ void dbg_warp_near(const char *area, const float near[3], const char *boot) {
         snprintf(warp.area, sizeof warp.area, "%s", area);
         warp.pos[0] = 0;
         snprintf(warp.boot, sizeof warp.boot, "%s", boot ? boot : "");
-        warp.has_near = near != NULL;
+        warp.has_near = near != NULL, warp.retry = 1;
         if (near) memcpy(warp.near, near, sizeof warp.near);
         warp.tries = 0, warp.retry_until = 0, warp.waited = 0, warp.at = 0;
         warp.state = W_ASKED;
@@ -688,11 +692,13 @@ static void warp_step(Cpu *c, uint64_t tick) {
             snprintf(warp.pos, sizeof warp.pos, "%s", first);
             plat_mutex_unlock(&q_lock);
         }
+        if (warp.retry) warp.retry = 0, warp.retry_until = tick + RETRY_FOR;   // dbg_warp_near: refusals are tried again
         // the game's event that only waits: the change of area is asked for while it runs
         if (player() && gmd() && dbg_player_pos(warp.from) && event_request(c, "DefaultParentEvent")) {
             warp.at = tick + 4, warp.state = W_EVENT;
         } else if (tick < warp.retry_until) {
-            warp.at = tick + RETRY_EVERY;   // Link still falls: the game takes it once he lands, or the time runs out
+            // Link still falls, or a menu is open: the game takes it once he lands or the menu closes, or the time runs out
+            warp.at = tick + RETRY_EVERY;
         } else {
             status_set(warp.tries ? "The game refuses a teleport while Link falls below %s: load the save, or try again "
                                     "should he land."
@@ -727,6 +733,7 @@ static void warp_step(Cpu *c, uint64_t tick) {
                        warp.pos[0] ? warp.pos : "its default start");
             warp.state = there ? W_SETTLE : W_IDLE;
             warp.land = p[1], warp.at = tick + SETTLE_TICKS;
+            if (there) __atomic_add_fetch(&arrivals, 1, __ATOMIC_RELEASE);
             dbg_freecam_reset();   // a free camera left behind in the old area's place starts again from the game's view
         }
     } else if (warp.state == W_SETTLE) {

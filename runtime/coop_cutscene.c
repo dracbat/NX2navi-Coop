@@ -8,18 +8,20 @@
 // Dm_SY_* or Dm_Title_*, whose component list is not an NPC one: 309 of 2380 rows), it sends START (event, area,
 // Link's place, age, movie) to the room, and END when the event is over. Talks are never sent: dialog stays per player.
 //
-// Follower. A START from an accepted member (and of a story cutscene of this player's own table, in the same age)
-// waits until this game is free (in the world, no event or request of its own, no menu: progress sync's gate, the
-// debug tools idle; 45 s at most), then holds progress sync (the room's values wait, so the leader's flags cannot change
-// this world before or while its own copy plays), and:
-//   - in the leader's area, or a pre-rendered movie: starts the event by its name (the debug tools' start, tried every
-//     0.5 s for 20 s while the game refuses it);
+// Follower. A START from another player of the room (and of a story cutscene of this player's own table, in the same
+// age) waits until this game is free (in the world, no event or request of its own, no menu: progress sync's gate, the
+// save copied for the room, the debug tools idle; 45 s at most), then holds progress sync (the room's values wait, so
+// the leader's flags cannot change this world before or while its own copy plays), and:
+//   - in the leader's area, or a pre-rendered movie (as this game's own table says, whatever the START says): starts
+//     the event by its name (the debug tools' start, tried every 0.5 s for 20 s while the game refuses it);
 //   - elsewhere: the debug tools' teleport to the leader's area, at its start position nearest the leader, with the
 //     event reserved as the one the game plays at the arrival (Sequence_ReservedBootEventName); when it does not start
-//     there by itself within 3 s, it is started by its name as above.
+//     there by itself within 3 s, it is started by its name as above. The game refuses a teleport in a menu, in the
+//     air or while swimming: the debug tools ask again for a while, and a teleport that never arrived leaves the follow
+//     waiting for the next free moment while its 45 s last.
 // When this game's event is over (1 s with none), the hold ends (the room's values come in: the same ones its own copy
 // set) and the player stays with the leader (NX2NAVI_COOP_CUTSCENE_RETURN=back: teleported back to the start position
-// nearest where he was). A game that leads never follows and a game that follows never leads. Boss scenes
+// nearest where they were). A game that leads never follows and a game that follows never leads. Boss scenes
 // (*_BossIn/*_BossOut) are followed only by players already in the leader's area (NX2NAVI_COOP_CUTSCENE_BOSSES).
 // While a story cutscene plays here, the other players' puppets are taken out of it (NX2NAVI_COOP_CUTSCENE_HIDE).
 //
@@ -32,7 +34,21 @@
 //
 // The era (section "the era"): Sequence_IsChildhood is out of progress sync; changes of era go to the room with the
 // scene that brought them (ERA), and a player of another era follows that scene, else is teleported into the room's
-// era (NX2NAVI_COOP_ERA, coop_cutscene.h).
+// era (NX2NAVI_COOP_ERA, coop_cutscene.h). A player who joins a room of the other era is taken into the room's era too.
+//
+// The room (coop_ext.h). Each message goes once and reliably, from the co-op thread; one the room's queue cannot take
+// yet waits for the next step (10 s at most). The players of the room are trusted as they are (coop.c lets only those on
+// the host's list speak); a window per sender's seat drops what came twice or late, and the lines about what a player
+// sent go through coop_ext_log, a few a second per sender. Nothing the room sends reaches this world before its save was
+// copied for the room (coop_game_backed_up): a followed scene, a time of day set and a teleport into the room's era
+// wait for it. The room's host keeps the room's time and era: it repeats them, and sends them at once to a player who
+// comes.
+//
+// Orders. TIME and ERA carry an order, a Lamport clock: each jump of the time and each change of era makes one more.
+// Orders start again from 0 in each room and are compared as serial numbers: one more than ORDER_STEP ahead of or
+// behind the order this game knows is taken from the room's host only (anyone else's is dropped). Within one order the
+// host's word wins, then the lower player id (the same in every game). So no message can pin the room's time or era
+// (the next jump or change is always newer), and a game that comes from a busier room takes the new room's.
 //
 // Settings (environment or nx2navi.ini, no menu row; logged at start):
 //   NX2NAVI_COOP_CUTSCENES=0          nothing sent or followed (default on)
@@ -46,8 +62,8 @@
 //   NX2NAVI_COOP_ERA                  follow (default) | scene | shared | own (section "the era")
 //   NX2NAVI_COOP_CUTSCENE_TEST        tests, ';'-separated:
 //       start:<event>@<s>    this game starts the event by its name <s> seconds after Link first stood in the world
-//       start:<event>~<s>    ... <s> seconds after another member was first seen in the game world (their POS)
-//       follow:<event>:<area>:<x>,<y>,<z>@<s>   a START as if from another member (the follower alone)
+//       start:<event>~<s>    ... <s> seconds after another player was first seen in the game world (their pose)
+//       follow:<event>:<area>:<x>,<y>,<z>@<s>   a START as if from another player (the follower alone)
 //       settime:<hh>:<mm>@<s> (or ~<s>)        the game's own time setter (its jump goes to the room)
 //       warp:<area>[:<start position>]@<s> (or ~<s>)   the debug teleport (into an area of the other era: a change of era)
 //       loop                 every message sent is parsed back and logged
@@ -62,11 +78,10 @@
 #include "coop.h"
 #include "coop_cutscene.h"
 #include "coop_events.h"
+#include "coop_ext.h"
 #include "coop_game.h"
-#include "coop_offer.h"
 #include "coop_puppet.h"
 #include "debug_tools.h"
-#include "fs.h"
 #include "host.h"
 #include "platform/platform.h"
 
@@ -122,8 +137,6 @@ static uint32_t murmur3(const uint8_t *p, size_t len) {
 }
 static uint32_t hash_of(const char *s) { return murmur3((const uint8_t *)s, strlen(s)); }
 
-static uint32_t u32le(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
-
 // A Bool of the game's flag database (coop_game.c's layout): -1 when it is not there.
 static int flag_bool(uint32_t hash) {
     uint64_t mgr = rd_ptr(FLAGS_MGR), c = mgr ? mgr + 0x008 : 0, table = c ? rd_ptr(c + 0x18) : 0, entries = c ? rd_ptr(c + 0x10) : 0;
@@ -146,29 +159,42 @@ static int link_adult(uint64_t player) {
     return strstr(n, "Adult") != NULL;
 }
 
-// The bytes of CUTSCENE and ERA: coop_ext_wire.c (coop_cut_pack, coop_cut_parse, coop_era_pack, coop_era_parse).
-
-static void put32(uint8_t *p, uint32_t v) {
-    for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> 8 * i);
-}
+// The bytes of CUTSCENE, TIME and ERA: coop_ext_wire.c (coop_cut_*, coop_time_*, coop_era_*).
 
 // ---- state
 
 enum { F_IDLE, F_WAIT, F_WARP, F_START, F_PLAY, F_RETURN };
 static const char *const f_names[] = {"idle", "waiting until free", "teleporting", "starting", "playing", "going back"};
 enum { BOSS_NEVER, BOSS_AREA, BOSS_ALL };
-enum { NOUT = 8, NTEST = 8 };
+enum { NOUT = 16, NTEST = 8, NIN = 8 };
+enum {
+    OUT_KEEP_MS = 10000,    // a message the room's queue did not take within this is dropped
+    ORDER_STEP = 1000,      // orders further than this from the one this game knows are taken from the room's host only
+    FOLLOW_TRIES = 3,       // teleports a follow asks for while its 45 s last (the game refuses them in menus)
+    FAR_SAY_MS = 30000,
+};
 
 typedef struct {
-    int used, copies;
+    int used;
+    uint32_t n;                  // the order it was queued in
     uint64_t t0;
     uint8_t kind;
     uint16_t len;
     uint8_t buf[COOP_ERA_MSG_MAX];   // the largest message kind this module sends (ERA)
 } Out;
 
+// A receiver's window per sender's seat: a message is taken once, and none older than the last taken from the same
+// player (the seat's gen) and process (epoch). Numbers are compared as serial numbers.
+typedef struct { uint32_t gen, epoch, seq; int any; } Win;
+
+static int win_take(Win *w, uint32_t gen, uint32_t epoch, uint32_t seq) {   // 1: new
+    if (w->any && w->gen == gen && w->epoch == epoch && (int32_t)(seq - w->seq) <= 0) return 0;
+    w->any = 1, w->gen = gen, w->epoch = epoch, w->seq = seq;
+    return 1;
+}
+
 typedef struct {
-    int kind;   // 0 start, 1 follow
+    int kind;   // 0 start, 1 follow, 2 settime, 3 warp
     int after_other;
     double at;
     int done;
@@ -177,29 +203,34 @@ typedef struct {
 } Test;
 
 static struct {
-    PlatMutex lock;              // the inbox, the windows and the outbox
+    PlatMutex lock;              // the inboxes, the windows, the seats and the outbox
     unsigned cfg_seen;
     int on, boot, back, bosses, hide, trace, loop;
     int active;                  // the frame hook does this module's work (present thread; read by the game thread)
     Test test[NTEST];
     int ntest;
     uint32_t epoch, seq;
-    _Atomic int others, self;
-    _Atomic uint32_t present;    // the room's members not away, this player included (a bit per id)
-    // time of day: the switch, the inbox (co-op thread -> game thread)
+    _Atomic int others, self, host;   // the other players in the room; this game's seat, the host's (0 outside a room)
+    // the seats as the co-op thread last saw them (C.lock): each one's player (gen, 0 none) and name
+    uint32_t seat_gen[COOP_PLAYERS + 1];
+    char seat_name[COOP_PLAYERS + 1][COOP_NAME_CAP];
+    uint32_t room_seen;          // the glue's count of rooms while in one, 0 outside
+    int f_reset;                 // C.lock: the room changed: a follow of the last room's player ends
+    // time of day: the switch, the inbox (co-op thread -> game thread, C.lock)
     int time_on;
-    int t_have, t_from, t_jump;
-    uint32_t t_lamport, t_tod;
-    uint64_t t_at;
-    struct { uint32_t epoch, seq; int any; } t_win[COOP_MAX_MEMBERS + 1];
+    struct { CoopTimeMsg m; int from; uint64_t at; } t_in[NIN];
+    int nt_in;
+    int t_reset, t_greet;        // the room changed; a player came (the host sends the room's time at once)
+    Win t_win[COOP_PLAYERS + 1];
     // the inbox (co-op thread -> game thread)
     CoopCutMsg in;
     int in_have, in_from, in_fake;
     uint64_t in_at;
     CoopCutMsg end;
     int end_have, end_from;
-    struct { uint32_t epoch, seq; int any; } win[COOP_MAX_MEMBERS + 1];
+    Win win[COOP_PLAYERS + 1];
     Out out[NOUT];
+    uint32_t out_n;
     // the leader (game thread)
     uint64_t ev;
     char name[COOP_CUT_EVENT_MAX + 1];
@@ -211,7 +242,8 @@ static struct {
     CoopCutMsg fm;
     int f_from;
     uint64_t f_until, f_retry, f_quiet, f_t0, f_arrived;
-    int f_tries, f_hold;
+    int f_tries, f_hold, f_warps;
+    unsigned f_arrivals;         // dbg_arrivals when the follow's teleport was asked for
     char home_area[COOP_CUT_AREA_MAX + 1];
     float home[3];
     // the clock of the tests (game thread)
@@ -222,11 +254,12 @@ static struct {
     uint64_t probe_at, probe_obj;
     uint32_t probe_words[0x60];
     // time of day (game thread)
-    uint32_t tl;                 // the newest time order this game knows (a Lamport clock: a jump makes one more)
+    uint32_t tl;                 // the newest time order this game knows in this room (a Lamport clock)
+    int t_known;                 // ... one is known (the first one heard is taken as it is)
     uint32_t t_last, t_seq;
-    int t_have_last, t_pend, t_pend_jump, t_pend_from, t_keeper;
+    int t_have_last, t_pend, t_pend_jump, t_pend_from, t_keeper, t_greet_due, t_low;
     uint32_t t_target, t_expect;
-    uint64_t t_beat_at, t_pend_at, t_expect_until, t_moved_at;
+    uint64_t t_beat_at, t_pend_at, t_expect_until, t_moved_at, t_reply_at, t_far_said;
     // story scenes played here lately (any role): a START of one of them is not followed (a chain's scenes come back
     // from the other players' worlds as their own STARTs)
     struct { uint32_t h; uint64_t at; } played[16];
@@ -243,28 +276,28 @@ static struct {
     uint64_t lc_until;
     // the era (NX2NAVI_COOP_ERA): the setting; the inbox (co-op thread -> game thread, C.lock)
     int era_mode, cfg_said_era;
-    CoopEraMsg e_in;
-    int e_in_have, e_in_from;    // the newest message heard since the game thread last looked, and its sender
-    int e_low_have, e_low_from;  // ... and the oldest order heard meanwhile (a member to bring up to date)
-    uint32_t e_low_order;
-    struct { uint32_t epoch, seq; int any; } e_win[COOP_MAX_MEMBERS + 1];
+    struct { CoopEraMsg m; int from; } e_in[NIN];
+    int ne_in;
+    int e_reset, e_greet;        // the room changed; a player came (the host sends the room's era at once)
+    Win e_win[COOP_PLAYERS + 1];
     uint32_t e_seq;
     // the era (game thread)
     unsigned e_serial;           // coop_game_save_serial when last read
     int e_mine;                  // this game's era: -1 not known, 0 child, 1 adult (Sequence_IsChildhood)
-    uint32_t e_order;            // the newest era order this game knows (a Lamport clock)
-    int e_room, e_from;          // the room's era at that order (-1 not known) and the member behind it
+    uint32_t e_order;            // the newest era order this game knows in this room (a Lamport clock)
+    int e_room, e_from;          // the room's era at that order (-1 not known) and the seat behind it (this game's own too)
     CoopEraMsg e_last;           // that change's scene and place
-    uint64_t e_beat_at, e_reply_at, e_behind_at;
-    // what the catch-up did for an order (the order + 1; 0 nothing yet): its scene followed, teleports asked (and how
-    // many), the waits and the end said
+    uint32_t e_change;           // one more each time the room's era is taken anew (never 0)
+    uint64_t e_beat_at, e_reply_at, e_behind_at, e_far_said;
+    int e_low, e_greet_due;      // a seat heard with an older order (it hears the newest); a beat owed to a newcomer
+    // what the catch-up did for a change (e_change; 0 nothing yet): its scene followed, teleports asked (and how many),
+    // the waits and the end said
     uint32_t e_scene_tried, e_switch_tried, e_said_behind, e_said_stuck;
     int e_switch_n;
     int e_expect;                // the era a teleport of this module brings (-1 none)
     uint64_t e_expect_until;
+    unsigned e_arrivals;         // dbg_arrivals when that teleport was asked for
     int e_keeper, e_names;
-    int e_reset;                 // C.lock: the room changed (on_view): the era's state starts again
-    char room[COOP_SECRET_TEXT + 1];   // the co-op thread's: the room last seen
 } C = {.lock = PLAT_MUTEX_INIT};
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -303,7 +336,6 @@ static void time_probe(uint64_t now) {
     memcpy(C.probe_words, w, sizeof w);
 }
 
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void say(const char *fmt, ...) {
     char line[400];
     va_list ap;
@@ -322,7 +354,64 @@ static void esay(const char *fmt, ...) {
     rt_log("coop: era: %s", line);
 }
 
+static int coop_on(void) { return cfg_bool("NX2NAVI_COOP_STEAM"); }
+
+// "seat N 'name'" for a log line (any thread but the co-op thread's handlers, which hold no lock here either): seat 0
+// is a test's message, and this game's own seat says so.
+typedef struct { char t[COOP_NAME_CAP + 40]; } Who;
+static const char *who(int seat, Who *w) {
+    if (seat < 1 || seat > COOP_PLAYERS) {
+        snprintf(w->t, sizeof w->t, "a test");
+        return w->t;
+    }
+    if (seat == atomic_load(&C.self)) {
+        snprintf(w->t, sizeof w->t, "this game (seat %d)", seat);
+        return w->t;
+    }
+    plat_mutex_lock(&C.lock);
+    snprintf(w->t, sizeof w->t, "seat %d '%s'", seat, C.seat_name[seat][0] ? C.seat_name[seat] : "(name not known yet)");
+    plat_mutex_unlock(&C.lock);
+    return w->t;
+}
+
+// How order o stands to the order known (serial numbers): the same, newer or older within ORDER_STEP, else far.
+enum { O_SAME, O_NEWER, O_OLDER, O_FAR };
+static int order_rel(uint32_t o, uint32_t known) {
+    int32_t d = (int32_t)(o - known);
+    return !d ? O_SAME : d > 0 && d <= ORDER_STEP ? O_NEWER : d < 0 && d >= -ORDER_STEP ? O_OLDER : O_FAR;
+}
+
+// Within one order, whose word wins: the room's host's, then the lower player id (the same in every game). 1 when
+// seat a's player ranks above seat b's (a seat with nobody in it ranks last).
+static int ranks_above(int a, int b) {
+    CoopExtView v;
+    coop_ext_view(&v);
+    const CoopSeat *x = a >= 1 && a <= COOP_PLAYERS ? &v.seat[a] : NULL, *y = b >= 1 && b <= COOP_PLAYERS ? &v.seat[b] : NULL;
+    if (!x || !x->id) return 0;
+    if (!y || !y->id) return 1;
+    if (x->host != y->host) return x->host;
+    return x->id < y->id;
+}
+
 // ---- the co-op thread
+
+// A message for the room, sent from the co-op thread once (in the order queued); when the queue is full the oldest
+// gives way.
+static void queue_out(uint8_t kind, const uint8_t *buf, size_t n) {
+    plat_mutex_lock(&C.lock);
+    int slot = -1;
+    for (int i = 0; i < NOUT && slot < 0; i++)
+        if (!C.out[i].used) slot = i;
+    if (slot < 0) {
+        slot = 0;
+        for (int i = 1; i < NOUT; i++)
+            if ((int32_t)(C.out[i].n - C.out[slot].n) < 0) slot = i;
+    }
+    Out *o = &C.out[slot];
+    o->used = 1, o->n = ++C.out_n, o->t0 = plat_now_ms(), o->kind = kind, o->len = (uint16_t)n;
+    memcpy(o->buf, buf, n);
+    plat_mutex_unlock(&C.lock);
+}
 
 static void queue_msg(const CoopCutMsg *m) {
     uint8_t buf[COOP_CUT_MSG_MAX];
@@ -337,92 +426,104 @@ static void queue_msg(const CoopCutMsg *m) {
         say("loop: %s seq %u, %zu bytes, parsed back %d: '%s' in '%s' at %.1f %.1f %.1f flags %u", m->op == COOP_CUT_START ? "START" : "END",
             m->seq, n, ok, back.event, back.area, back.xyz[0], back.xyz[1], back.xyz[2], back.flags);
     }
-    plat_mutex_lock(&C.lock);
-    int slot = -1;
-    for (int i = 0; i < NOUT && slot < 0; i++)
-        if (!C.out[i].used) slot = i;
-    if (slot < 0) slot = 0;   // the oldest repeats give way
-    Out *o = &C.out[slot];
-    o->used = 1, o->copies = 0, o->t0 = plat_now_ms(), o->kind = COOP_K_CUTSCENE, o->len = (uint16_t)n;
-    memcpy(o->buf, buf, n);
-    plat_mutex_unlock(&C.lock);
+    queue_out(COOP_K_CUTSCENE, buf, n);
 }
 
 static void on_msg(int from, const uint8_t *bytes, size_t n, void *user) {
     (void)user;
+    if (from < 1 || from > COOP_PLAYERS || from == atomic_load(&C.self)) return;
     CoopCutMsg m;
-    if (!coop_cut_parse(bytes, n, &m)) {
-        static uint64_t said;
-        uint64_t now = plat_now_ms();
-        if (now - said >= 5000) said = now, say("a CUTSCENE message of member %d does not parse (%zu bytes)", from, n);
-        return;
-    }
-    if (from < 1 || from > COOP_MAX_MEMBERS || from == atomic_load(&C.self)) return;
-    int trusted = coop_game_shown() >> from & 1;
+    char name[COOP_NAME_CAP];
     plat_mutex_lock(&C.lock);
-    if (C.win[from].any && C.win[from].epoch == m.epoch && m.seq <= C.win[from].seq) {   // a copy, or an old one
+    snprintf(name, sizeof name, "%s", C.seat_name[from][0] ? C.seat_name[from] : "(name not known yet)");
+    plat_mutex_unlock(&C.lock);
+    if (!coop_cut_parse(bytes, n, &m)) {
+        coop_ext_log(from, "cutscene: a CUTSCENE of %zu bytes from seat %d '%s' does not parse; dropped", n, from, name);
+        return;
+    }
+    plat_mutex_lock(&C.lock);
+    if (!win_take(&C.win[from], C.seat_gen[from], m.epoch, m.seq)) {   // sent twice, or an older one
         plat_mutex_unlock(&C.lock);
         return;
     }
-    C.win[from].any = 1, C.win[from].epoch = m.epoch, C.win[from].seq = m.seq;
-    if (trusted && m.op == COOP_CUT_START) C.in = m, C.in_have = 1, C.in_from = from, C.in_fake = 0, C.in_at = plat_now_ms();
-    if (trusted && m.op == COOP_CUT_END) C.end = m, C.end_have = 1, C.end_from = from;
+    if (m.op == COOP_CUT_START) C.in = m, C.in_have = 1, C.in_from = from, C.in_fake = 0, C.in_at = plat_now_ms();
+    if (m.op == COOP_CUT_END) C.end = m, C.end_have = 1, C.end_from = from;
     plat_mutex_unlock(&C.lock);
-    say("member %d %s '%s' in '%s' at %.1f %.1f %.1f (%s%s)%s", from, m.op == COOP_CUT_START ? "starts" : "ends", m.event,
-        m.area, m.xyz[0], m.xyz[1], m.xyz[2], m.flags & COOP_CUT_ADULT ? "adult" : "child", m.flags & COOP_CUT_MOVIE ? ", a movie" : "",
-        trusted ? "" : ": dropped, the member is not accepted or not identified");
+    coop_ext_log(from, "cutscene: seat %d '%s' %s '%s' in '%s' at %.1f %.1f %.1f (%s%s)", from, name,
+                 m.op == COOP_CUT_START ? "starts" : "ends", m.event, m.area, m.xyz[0], m.xyz[1], m.xyz[2],
+                 m.flags & COOP_CUT_ADULT ? "adult" : "child", m.flags & COOP_CUT_MOVIE ? ", a movie, it says" : "");
 }
 
-static void on_view(const CoopView *v, void *user) {
+static void on_view(const CoopExtView *v, void *user) {
     (void)user;
-    const char *room = v->state == COOP_JOINED || v->state == COOP_RECONNECTING ? v->code : "";
-    if (strcmp(room, C.room)) {   // another room (or none): the era's state there is learnt anew
-        snprintf(C.room, sizeof C.room, "%s", room);
-        plat_mutex_lock(&C.lock);
-        C.e_reset = 1;
-        plat_mutex_unlock(&C.lock);
+    int others = 0, came = 0;
+    uint32_t room = v->in_room ? v->room : 0;
+    plat_mutex_lock(&C.lock);
+    for (int s = 1; s <= COOP_PLAYERS; s++) {
+        const CoopSeat *t = &v->seat[s];
+        uint32_t gen = v->in_room && t->id ? t->gen : 0;
+        if (gen != C.seat_gen[s]) came |= gen && !t->self, C.seat_gen[s] = gen;
+        snprintf(C.seat_name[s], sizeof C.seat_name[s], "%s", gen ? t->name : "");
+        others += gen && !t->self;
     }
-    atomic_store(&C.self, v->self);
-    atomic_store(&C.others, v->state == COOP_JOINED && v->n > 1 ? v->n - 1 : 0);
-    uint32_t bits = 0;
-    for (int i = 0; v->state == COOP_JOINED && i < v->n; i++)
-        if (v->member[i].id >= 1 && v->member[i].id <= COOP_MAX_MEMBERS && (!v->member[i].away || v->member[i].id == v->self))
-            bits |= 1u << v->member[i].id;
-    atomic_store(&C.present, bits);
+    if (room != C.room_seen) {   // another room (or none): its time and era are learnt anew, and nothing of the last stays
+        C.room_seen = room;
+        C.t_reset = C.e_reset = C.f_reset = 1;
+        C.nt_in = C.ne_in = 0, C.in_have = C.end_have = 0;
+    }
+    if (came) C.t_greet = C.e_greet = 1;
+    plat_mutex_unlock(&C.lock);
+    atomic_store(&C.self, v->in_room ? v->self : 0);
+    atomic_store(&C.host, v->in_room ? v->host : 0);
+    atomic_store(&C.others, others);
 }
 
-static const uint32_t repeat_ms[3] = {0, 150, 450};
-
+// The messages waiting to go out, each once, in the order they were queued; what the room's queue does not take now
+// waits for the next step, OUT_KEEP_MS at most.
 static void on_tick(uint64_t now, void *user) {
     (void)user;
-    static struct { uint8_t kind; uint16_t len; uint8_t buf[COOP_ERA_MSG_MAX]; } go[NOUT];
-    int ng = 0;
+    static struct { int slot; uint32_t n; uint8_t kind; uint16_t len; uint8_t buf[COOP_ERA_MSG_MAX]; } go[NOUT];
+    int ng = 0, expired = 0;
     plat_mutex_lock(&C.lock);
     for (int i = 0; i < NOUT; i++) {
         Out *o = &C.out[i];
-        if (!o->used || now < o->t0 + repeat_ms[o->copies]) continue;
-        go[ng].kind = o->kind, go[ng].len = o->len;
-        memcpy(go[ng].buf, o->buf, o->len);
-        ng++;
-        if (++o->copies >= 3) o->used = 0;
+        if (!o->used) continue;
+        if (now > o->t0 && now - o->t0 > OUT_KEEP_MS) {   // t0 is the game thread's clock, a moment after this step's now
+            o->used = 0, expired++;
+            continue;
+        }
+        int j = ng++;
+        while (j > 0 && (int32_t)(o->n - go[j - 1].n) < 0) go[j] = go[j - 1], j--;
+        go[j].slot = i, go[j].n = o->n, go[j].kind = o->kind, go[j].len = o->len;
+        memcpy(go[j].buf, o->buf, o->len);
     }
     plat_mutex_unlock(&C.lock);
+    int sent = 0;
+    while (sent < ng && coop_ext_send(0, go[sent].kind, go[sent].buf, go[sent].len, 1)) sent++;
+    if (sent) {
+        plat_mutex_lock(&C.lock);
+        for (int i = 0; i < sent; i++)
+            if (C.out[go[i].slot].used && C.out[go[i].slot].n == go[i].n) C.out[go[i].slot].used = 0;
+        plat_mutex_unlock(&C.lock);
+    }
     static uint64_t said;
-    for (int i = 0; i < ng; i++)
-        if (!coop_send(go[i].kind, go[i].buf, go[i].len) && now - said >= 10000)
-            said = now, say("a %s message could not be sent (not in a room, or the outbox is full)",
-                            go[i].kind == COOP_K_TIME ? "TIME" : go[i].kind == COOP_K_ERA ? "ERA" : "CUTSCENE");
+    if ((expired || sent < ng) && now - said >= 10000) {
+        said = now;
+        say("%d messages wait for the room's queue%s", ng - sent,
+            expired ? "; some waited too long and were dropped (not in a room, or the queue stayed full)" : "");
+    }
 }
 
 void coop_cutscene_init(void) {
     uint64_t r = plat_now_ns();
     C.epoch = (uint32_t)(r ^ r >> 32 ^ (uint64_t)(uintptr_t)&C) | 1u;
     C.e_mine = C.e_room = C.e_expect = -1;
-    coop_on_message(COOP_K_CUTSCENE, on_msg, NULL);
-    coop_on_message(COOP_K_TIME, on_time, NULL);
-    coop_on_message(COOP_K_ERA, on_era, NULL);
-    coop_on_view(on_view, NULL);
-    coop_on_tick(on_tick, NULL);
+    C.e_change = 1;
+    coop_ext_on_message(COOP_K_CUTSCENE, on_msg, NULL);
+    coop_ext_on_message(COOP_K_TIME, on_time, NULL);
+    coop_ext_on_message(COOP_K_ERA, on_era, NULL);
+    coop_ext_on_view(on_view, NULL);
+    coop_ext_on_tick(on_tick, NULL);
 }
 
 // ---- the present thread: settings
@@ -478,9 +579,9 @@ static void parse_tests(const char *v) {
         }
         C.test[C.ntest++] = t;
         say("test %d: %s '%s'%s%s %s %.1f s", C.ntest,
-            t.kind == 3 ? "teleport to" : t.kind == 2 ? "set the time of day to" : t.kind ? "a START as if from another member for" : "start",
+            t.kind == 3 ? "teleport to" : t.kind == 2 ? "set the time of day to" : t.kind ? "a START as if from another player for" : "start",
             t.event, t.kind == 1 ? " in " : t.kind == 3 ? " " : "", t.kind == 1 || t.kind == 3 ? t.area : "",
-            t.after_other ? "after another member is in the world, plus" : "at", t.at);
+            t.after_other ? "after another player is in the world, plus" : "at", t.at);
     }
 }
 
@@ -495,7 +596,7 @@ int coop_cutscene_present(void) {
         C.on = !is0(on), C.boot = !is0(boot), C.back = ret && !strcmp(ret, "back"), C.hide = !is0(hide);
         const char *tm = cfg_get("NX2NAVI_COOP_TIME");   // the time of day shared unless "0"
         C.time_on = !is0(tm);
-        if (cfg_bool("NX2NAVI_COOP"))
+        if (coop_on())
             say("time: the time of day %s (NX2NAVI_COOP_TIME='%s')", C.time_on ? "is shared" : "stays each player's", tm ? tm : "");
         C.bosses = is0(boss) ? BOSS_NEVER : boss && !strcmp(boss, "all") ? BOSS_ALL : BOSS_AREA;
         C.trace = trace && *trace && !is0(trace);
@@ -503,14 +604,14 @@ int coop_cutscene_present(void) {
         C.time_probe = tp && *tp && !is0(tp) ? atof(tp) : 0;
         if (C.time_probe > 0 && C.time_probe < 1) C.time_probe = 1;
         parse_tests(test);
-        if (cfg_bool("NX2NAVI_COOP") || C.trace || C.ntest || C.loop)
+        if (coop_on() || C.trace || C.ntest || C.loop)
             say("cutscenes %s (NX2NAVI_COOP_CUTSCENES='%s'); arrival event %s, after a scene %s, boss scenes %s, puppets in "
                 "scenes %s, trace %s, %d tests%s", C.on ? "together" : "off", on ? on : "", C.boot ? "on" : "off (start by name)",
                 C.back ? "back" : "stay", C.bosses == BOSS_NEVER ? "never" : C.bosses == BOSS_ALL ? "always" : "only in the same area",
                 C.hide ? "hidden" : "shown", C.trace ? "on" : "off", C.ntest, C.loop ? ", loop" : "");
         const char *era_raw;
         int mode = coop_era_setting(&era_raw);
-        if (cfg_bool("NX2NAVI_COOP") && (mode != C.era_mode || !C.cfg_said_era))
+        if (coop_on() && (mode != C.era_mode || !C.cfg_said_era))
             esay("%s (NX2NAVI_COOP_ERA='%s')",
                  mode == COOP_ERA_FOLLOW  ? "follow: out of progress sync; a change goes to the room with its scene, and a player "
                                             "of another era follows that scene, else is teleported into the room's era"
@@ -519,10 +620,10 @@ int coop_cutscene_present(void) {
                  : mode == COOP_ERA_SHARED ? "shared: in progress sync (the old way, child to adult only)"
                                            : "own: out of progress sync, each player's own era",
                  era_raw);
-        C.cfg_said_era |= cfg_bool("NX2NAVI_COOP");
+        C.cfg_said_era |= coop_on();
         C.era_mode = mode;
     }
-    // the era in a room, even alone in it: a change made then reaches those who join later (the keeper's beat)
+    // the era in a room, even alone in it: a change made then reaches those who join later (the host's beat)
     int era_on = (C.era_mode == COOP_ERA_FOLLOW || C.era_mode == COOP_ERA_SCENE) && atomic_load(&C.self) > 0;
     int want = RT_V111 && dbg_supported() &&
                (C.trace || C.ntest || C.time_probe > 0 || ((C.on || C.time_on) && atomic_load(&C.others) > 0) || era_on);
@@ -549,29 +650,26 @@ static int ev_now(EvNow *o) {
     return 1;
 }
 
+// The room's word may change this world now: co-op's gate is open and the save was copied for the room (without
+// co-op, a test's follow has no room and no gate).
+static int room_may_act(void) { return !coop_on() || (coop_game_running() && coop_game_backed_up()); }
+
 // ---- time of day, shared (NX2NAVI_COOP_TIME=0 off). The world's time part *(wm+0x510) keeps the time
 // of day as seconds at +0x28 (u32 0..86399, about 120 a second while the world runs). The game's own setter
 // (the event flows' ExecuteWmSetTime: main+0x34522d0(wm, seconds)) moves it, sky and all, as a scene or the Sun's
-// Song does. The room's time keeper is the member with the lowest id in the room: every 2 s it sends TIME (its time
-// and the newest time order it knows). A game whose own clock jumps (the Sun's Song, a scene, a bed: more than 10 game
-// minutes in a frame, not made by this module) makes a newer order and sends it at once (three times); every game,
-// the keeper included, takes the newest order's time. A game sets its time only when free (in the world, no event or
-// request, the debug tools idle, not following a scene), and for the keeper's beat only when it is more than 5 game
-// minutes off.
-enum { TIME_VERSION = 1, TIME_MSG = 18, DAY = 86400 };
-enum { TIME_JUMP = 1 };
+// Song does. The room's host keeps the room's time: every 2 s it sends TIME (its time and the newest time order it
+// knows), and at once when a player comes. A game whose own clock jumps (the Sun's Song, a scene, a bed: more than 10
+// game minutes in a frame, not made by this module) makes a newer order and sends it at once; every game, the host
+// included, takes the newest order's time, and within one order the host's (orders: the file's top). A game that hears
+// an older order than its own answers with its newest (at most every 2 s). A game sets its time only when free (in the
+// world, no event or request, the debug tools idle, not following a scene, the save copied for the room), and for the
+// host's beat only when it is more than 5 game minutes off. While a time it took waits to be set here, its own clock
+// is not the room's time: it sends neither beats nor answers until it is set.
 #define TOD_OFF 0x28
 
-static size_t time_pack(uint8_t *out, uint32_t epoch, uint32_t seq, uint32_t lamport, uint32_t tod, uint8_t flags) {
-    out[0] = TIME_VERSION;
-    put32(out + 1, epoch), put32(out + 5, seq), put32(out + 9, lamport), put32(out + 13, tod);
-    out[17] = flags;
-    return TIME_MSG;
-}
-
 static uint32_t tod_dist(uint32_t a, uint32_t b) {   // game seconds between two times of day, either way round
-    uint32_t d = (a + DAY - b) % DAY;
-    return d < DAY - d ? d : DAY - d;
+    uint32_t d = (a + COOP_TIME_DAY - b) % COOP_TIME_DAY;
+    return d < COOP_TIME_DAY - d ? d : COOP_TIME_DAY - d;
 }
 
 static const char *hhmm(uint32_t tod, char out[8]) {
@@ -579,95 +677,107 @@ static const char *hhmm(uint32_t tod, char out[8]) {
     return out;
 }
 
-static void queue_time(uint32_t lamport, uint32_t tod, uint8_t flags, int copies) {
-    plat_mutex_lock(&C.lock);
-    int slot = -1;
-    for (int i = 0; i < NOUT && slot < 0; i++)
-        if (!C.out[i].used) slot = i;
-    if (slot >= 0) {
-        Out *o = &C.out[slot];
-        o->used = 1, o->copies = 3 - copies, o->t0 = plat_now_ms() - repeat_ms[o->copies], o->kind = COOP_K_TIME;
-        o->len = (uint16_t)time_pack(o->buf, C.epoch, ++C.t_seq, lamport, tod, flags);
-    }
-    plat_mutex_unlock(&C.lock);
+static void queue_time(uint32_t order, uint32_t tod, uint8_t flags) {
+    CoopTimeMsg m = {.epoch = C.epoch, .seq = ++C.t_seq, .order = order, .tod = tod, .flags = flags};
+    uint8_t buf[COOP_TIME_MSG];
+    size_t n = coop_time_pack(&m, buf, sizeof buf);
+    if (n) queue_out(COOP_K_TIME, buf, n);
 }
 
 static void on_time(int from, const uint8_t *b, size_t n, void *user) {
     (void)user;
-    if (n != TIME_MSG || b[0] != TIME_VERSION || from < 1 || from > COOP_MAX_MEMBERS || from == atomic_load(&C.self)) return;
-    uint32_t epoch = u32le(b + 1), seq = u32le(b + 5), lamport = u32le(b + 9), tod = u32le(b + 13);
-    if (tod >= DAY || !(coop_game_shown() >> from & 1)) return;
-    plat_mutex_lock(&C.lock);
-    if (C.t_win[from].any && C.t_win[from].epoch == epoch && seq <= C.t_win[from].seq) {
-        plat_mutex_unlock(&C.lock);
+    if (from < 1 || from > COOP_PLAYERS || from == atomic_load(&C.self)) return;
+    CoopTimeMsg m;
+    if (!coop_time_parse(b, n, &m)) {
+        coop_ext_log(from, "time: a TIME of %zu bytes from seat %d does not parse; dropped", n, from);
         return;
     }
-    C.t_win[from].any = 1, C.t_win[from].epoch = epoch, C.t_win[from].seq = seq;
-    // the newest order wins; within one order a jump, else the lowest member (the keeper's beat)
-    if (!C.t_have || lamport > C.t_lamport || (lamport == C.t_lamport && ((b[17] & TIME_JUMP) || from <= C.t_from)))
-        C.t_have = 1, C.t_from = from, C.t_lamport = lamport, C.t_tod = tod, C.t_jump = b[17] & TIME_JUMP, C.t_at = plat_now_ms();
+    plat_mutex_lock(&C.lock);
+    if (win_take(&C.t_win[from], C.seat_gen[from], m.epoch, m.seq)) {
+        if (C.nt_in == NIN) memmove(C.t_in, C.t_in + 1, sizeof C.t_in[0] * (NIN - 1)), C.nt_in--;   // the oldest gives way
+        C.t_in[C.nt_in].m = m, C.t_in[C.nt_in].from = from, C.t_in[C.nt_in].at = plat_now_ms(), C.nt_in++;
+    }
     plat_mutex_unlock(&C.lock);
-}
-
-static int lowest_id(uint32_t bits) {
-    for (int i = 1; i <= COOP_MAX_MEMBERS; i++)
-        if (bits >> i & 1) return i;
-    return 0;
 }
 
 // The game thread, every frame of a room with others: the beat, this game's own jumps, and the room's time.
 static void time_frame(Cpu *c, const EvNow *e, uint64_t player, const char *area, uint64_t now) {
+    struct { CoopTimeMsg m; int from; uint64_t at; } in[NIN];
+    plat_mutex_lock(&C.lock);
+    int reset = C.t_reset, greet = C.t_greet, nin = C.nt_in;
+    memcpy(in, C.t_in, sizeof in[0] * (size_t)nin);
+    C.t_reset = C.t_greet = 0, C.nt_in = 0;
+    plat_mutex_unlock(&C.lock);
+    if (reset) {   // another room: its time order starts from what is heard there
+        C.tl = 0, C.t_known = 0, C.t_pend = C.t_pend_jump = 0, C.t_expect_until = 0, C.t_low = 0, C.t_beat_at = 0;
+        C.t_greet_due = 0;
+    }
     uint64_t wm = world_mgr(), part = wm ? rd_ptr(wm + 0x510) : 0;
     uint32_t tod = 0;
-    if (!part || !rd(part + TOD_OFF, &tod, 4) || tod >= DAY) return;
+    if (!part || !rd(part + TOD_OFF, &tod, 4) || tod >= COOP_TIME_DAY) return;
     int in_world = player && area[0];
     char a[8], b[8];
-    int self = atomic_load(&C.self);
-    uint32_t present = atomic_load(&C.present);
-    int keeper = self && lowest_id(present) == self;
+    Who w;
+    int self = atomic_load(&C.self), host = atomic_load(&C.host);
+    int keeper = self && self == host;
     if (keeper != C.t_keeper) {
         C.t_keeper = keeper;
-        say("time: %s", keeper ? "this game keeps the room's time (the lowest member id): its time goes out every 2 s"
-                               : "another member keeps the room's time");
+        say("time: %s", keeper ? "this game keeps the room's time (the room's host): its time goes out every 2 s"
+                               : "the room's host keeps the room's time");
     }
     // a jump of this game's own clock
     if (C.t_have_last && tod_dist(tod, C.t_last) > 600) {
         if (now < C.t_expect_until && tod_dist(tod, C.t_expect) < 300) {
             C.t_expect_until = 0;   // the room's time, set here
         } else if (in_world) {
-            C.tl++;
-            queue_time(C.tl, tod, TIME_JUMP, 3);
+            C.tl++, C.t_known = 1;
+            queue_time(C.tl, tod, COOP_TIME_JUMP);
             say("time: this game's clock jumped from %s to %s: sent to the room (order %u)", hhmm(C.t_last, a), hhmm(tod, b), C.tl);
         }
     }
     if (!C.t_have_last || tod != C.t_last) C.t_moved_at = now;
     int running = now - C.t_moved_at < 1500;   // the clock stands in menus, scenes, loads (and where the game stops it)
     C.t_last = tod, C.t_have_last = 1;
-    if (keeper && in_world && running && now >= C.t_beat_at) {
-        C.t_beat_at = now + 2000;
-        queue_time(C.tl, tod, 0, 1);
+    // what the room sent, in the order it came
+    for (int i = 0; i < nin; i++) {
+        const CoopTimeMsg *m = &in[i].m;
+        int from = in[i].from, jump = m->flags & COOP_TIME_JUMP, from_host = from == host;
+        int rel = order_rel(m->order, C.tl);   // tl is 0 until an order is known in this room
+        if (rel == O_NEWER || (rel == O_FAR && from_host) || (rel == O_SAME && !keeper && (jump || from_host))) {
+            if (rel != O_SAME || jump || !C.t_known) C.t_pend_jump = 1;   // the first time heard is set as a jump
+            C.tl = m->order, C.t_known = 1;
+            C.t_pend = 1, C.t_target = m->tod, C.t_pend_at = in[i].at, C.t_pend_from = from;
+        } else if (rel == O_OLDER) {
+            C.t_low = from;
+        } else if (rel == O_FAR && now - C.t_far_said >= FAR_SAY_MS) {
+            C.t_far_said = now;
+            say("time: %s sent order %u, far from this game's %u, and is not the room's host: dropped", who(from, &w), m->order, C.tl);
+        }
     }
-    // what the room sent
-    plat_mutex_lock(&C.lock);
-    int have = C.t_have, from = C.t_from, jump = C.t_jump;
-    uint32_t lam = C.t_lamport, ttod = C.t_tod;
-    uint64_t at = C.t_at;
-    C.t_have = 0;
-    plat_mutex_unlock(&C.lock);
-    if (have && (lam > C.tl || (lam == C.tl && !keeper && (jump || from == lowest_id(present))))) {
-        if (lam > C.tl || jump) C.t_pend_jump = 1;
-        if (lam > C.tl) C.tl = lam;
-        C.t_pend = 1, C.t_target = ttod, C.t_pend_at = at, C.t_pend_from = from;
+    // the beat (at once for a newcomer), and the newest order for a player that still has an older one: this game's own
+    // clock, so only while no time it took waits to be set here
+    if (greet) C.t_greet_due = 1;
+    if (!keeper) C.t_greet_due = 0;
+    if (keeper && in_world && !C.t_pend && ((running && now >= C.t_beat_at) || C.t_greet_due)) {
+        C.t_beat_at = now + 2000, C.t_greet_due = 0;
+        queue_time(C.tl, tod, 0);
+    }
+    if (C.t_low && C.t_known && in_world && !C.t_pend && now >= C.t_reply_at) {
+        C.t_reply_at = now + 2000;
+        queue_time(C.tl, tod, 0);
+        say("time: %s still has an older order: the room's newest (%u, %s) sent", who(C.t_low, &w), C.tl, hhmm(tod, a));
+        C.t_low = 0;
     }
     if (!C.t_pend || !in_world || e->ev || (e->flags & 0x4000) || dbg_busy() || C.f != F_IDLE) return;
+    if (coop_on() && !coop_game_backed_up()) return;   // nothing of the room before the save's copy
     if (!C.t_pend_jump && !running) return;   // a beat only sets a clock that runs (it waits for the next beat)
     // the time it is there now: what was sent, plus the game seconds since (about 120 a second)
-    uint32_t target = (C.t_target + (uint32_t)((now - C.t_pend_at) * 120 / 1000)) % DAY, off = tod_dist(tod, target);
+    uint32_t target = (C.t_target + (uint32_t)((now - C.t_pend_at) * 120 / 1000)) % COOP_TIME_DAY, off = tod_dist(tod, target);
     if (off > (C.t_pend_jump ? 60u : 300u)) {
         rt_call(c, WM_SET_TIME, 2, wm, (uint64_t)target);
         C.t_expect = target, C.t_expect_until = now + 3000;
-        say("time: set to %s (member %d's%s, order %u; it was %s here, %u game seconds off)", hhmm(target, a), C.t_pend_from,
-            C.t_pend_jump ? " jump" : " beat", C.tl, hhmm(tod, b), off);
+        say("time: set to %s (%s's %s, order %u; it was %s here, %u game seconds off)", hhmm(target, a), who(C.t_pend_from, &w),
+            C.t_pend_jump ? "jump" : "beat", C.tl, hhmm(tod, b), off);
     }
     C.t_pend = 0, C.t_pend_jump = 0;
 }
@@ -762,9 +872,10 @@ static void leader(const EvNow *e, uint64_t player, const char *area, uint64_t n
         }
         C.lc_until = now + CHAIN_PLAYING;
     }
-    char chain_why[96];
-    snprintf(chain_why, sizeof chain_why, "it comes here after member %d's scene this game followed (this world's copy of it)",
-             C.chain_from);
+    Who w;
+    char chain_why[160];
+    snprintf(chain_why, sizeof chain_why, "it comes here after the scene of %s this game followed (this world's copy of it)",
+             who(C.chain_from, &w));
     const char *why = !C.on ? "cutscenes are off here (NX2NAVI_COOP_CUTSCENES=0)"
                     : C.f != F_IDLE ? "this game plays it as a follower"
                     : C.ev_role == 2 ? chain_why
@@ -787,13 +898,16 @@ static void leader(const EvNow *e, uint64_t player, const char *area, uint64_t n
         m.flags & COOP_CUT_ADULT ? "adult" : "child", s->movie ? ", a movie" : "");
 }
 
-// A START taken from the inbox (fake 1: a test's; 2: the era's catch-up): followed or not; 1 when followed.
+// A START taken from the inbox (fake 1: a test's; 2: the era's catch-up): followed or not; 1 when followed. Whether the
+// scene is a movie (played where the player stands, no teleport) is this game's own table's word, not the sender's.
 static int consider(const CoopCutMsg *m, int from, int fake, uint64_t player, const char *area, uint64_t now) {
     const CoopStory *s = coop_events_story(m->event);
     int adult = player && link_adult(player), same = area[0] && !strcmp(area, m->area);
     uint64_t ago = played_ago(m->event, now);
-    char chain_why[96], ago_why[64];
-    snprintf(chain_why, sizeof chain_why, "this game plays member %d's scenes in its own world (the chain of the one it followed)", from);
+    Who w;
+    char chain_why[160], ago_why[64];
+    snprintf(chain_why, sizeof chain_why, "this game plays the scenes of %s in its own world (the chain of the one it followed)",
+             who(from, &w));
     snprintf(ago_why, sizeof ago_why, "this game played it %.0f s ago", (double)ago / 1000.0);
     const char *why = !C.on ? "cutscenes are off here (NX2NAVI_COOP_CUTSCENES=0)"
                     : !s ? "not a story cutscene of this game's event table"
@@ -803,16 +917,17 @@ static int consider(const CoopCutMsg *m, int from, int fake, uint64_t player, co
                     : ago < PLAYED_MS ? ago_why
                     : !player ? "Link is not in the world"
                     : !!(m->flags & COOP_CUT_ADULT) != adult ? "the other player is of another age"
-                    : !m->area[0] && !(m->flags & COOP_CUT_MOVIE) ? "no area given"
+                    : !m->area[0] && !s->movie ? "no area given"
                     : s->boss && C.bosses == BOSS_NEVER ? "boss scenes are not followed (NX2NAVI_COOP_CUTSCENE_BOSSES=0)"
                     : s->boss && C.bosses == BOSS_AREA && !same ? "a boss scene of another area (NX2NAVI_COOP_CUTSCENE_BOSSES=area)"
                     : NULL;
     if (why) {
-        say("member %d's '%s' is not followed: %s", from, m->event, why);
+        say("the scene '%s' of %s is not followed: %s", m->event, who(from, &w), why);
         return 0;
     }
-    C.fm = *m, C.f_from = from, C.f = F_WAIT, C.f_t0 = now, C.f_until = now + 45000, C.f_tries = 0, C.f_arrived = 0;
-    say("following member %d's '%s'%s: waiting until this game is free (45 s at most)", from, m->event,
+    C.fm = *m, C.f_from = from, C.f = F_WAIT, C.f_t0 = now, C.f_until = now + 45000, C.f_tries = 0, C.f_arrived = 0, C.f_warps = 0;
+    C.fm.flags = (uint8_t)((m->flags & ~COOP_CUT_MOVIE) | (s->movie ? COOP_CUT_MOVIE : 0));
+    say("following the scene '%s' of %s%s: waiting until this game is free (45 s at most)", m->event, who(from, &w),
         fake == 2 ? " (to change era as it did)" : fake ? " (test)" : "");
     return 1;
 }
@@ -828,18 +943,21 @@ static void follower(const EvNow *e, uint64_t player, const char *area, uint64_t
             follow_end("this game was not free within 45 s (a talk, a menu, a scene or a load)", now);
             return;
         }
-        int gate = coop_game_running() || !cfg_bool("NX2NAVI_COOP");   // tests without co-op have no gate
-        if (!gate || !player || !area[0] || e->ev || (e->flags & 0x4000) || dbg_busy()) return;
-        snprintf(C.home_area, sizeof C.home_area, "%s", area);
-        rd(player + A_POS, C.home, 12);
-        C.f_hold = 1, hold_now();
+        if (!room_may_act() || !player || !area[0] || e->ev || (e->flags & 0x4000) || dbg_busy()) return;
+        if (!C.f_hold) {   // where the player was, for the way back; kept when a refused teleport is asked again
+            snprintf(C.home_area, sizeof C.home_area, "%s", area);
+            rd(player + A_POS, C.home, 12);
+            C.f_hold = 1, hold_now();
+        }
         if ((C.fm.flags & COOP_CUT_MOVIE) || !strcmp(area, C.fm.area)) {
             say("'%s': %s: started by its name here", C.fm.event, C.fm.flags & COOP_CUT_MOVIE ? "a movie plays anywhere" : "same area");
             C.f = F_START, C.f_retry = now, C.f_until = now + 20000;
         } else {
             say("'%s': teleporting from '%s' to '%s', near %.1f %.1f %.1f%s", C.fm.event, area, C.fm.area, C.fm.xyz[0], C.fm.xyz[1],
                 C.fm.xyz[2], C.boot ? ", the scene reserved for the arrival" : "");
+            C.f_arrivals = dbg_arrivals();
             dbg_warp_near(C.fm.area, C.fm.xyz, C.boot ? C.fm.event : "");
+            C.f_warps++;
             C.f = F_WARP, C.f_until = now + 60000;
         }
         return;
@@ -855,6 +973,12 @@ static void follower(const EvNow *e, uint64_t player, const char *area, uint64_t
         if (strcmp(area, C.fm.area)) {
             char st[160];
             dbg_status(st);
+            if (dbg_arrivals() == C.f_arrivals && now < C.f_t0 + 45000 && C.f_warps < FOLLOW_TRIES) {
+                // the game refused it (a menu, Link in the air or swimming): asked again at the next free moment
+                say("'%s': the teleport did not happen (the debug tools say: %s); asked again once this game is free", C.fm.event, st);
+                C.f = F_WAIT, C.f_until = C.f_t0 + 45000;
+                return;
+            }
             follow_end(now > C.f_until ? "the teleport took more than 60 s" : "the teleport did not arrive", now);
             say("the debug tools say: %s", st);
             return;
@@ -878,7 +1002,7 @@ static void follower(const EvNow *e, uint64_t player, const char *area, uint64_t
             C.f_retry = now + 500, C.f_tries++;
         }
         return;
-    case F_PLAY:
+    case F_PLAY: {
         if (C.f_hold && now - C.f_t0 > 180000) {   // a talk left open, a scene that chains on: the room's values come in
             C.f_hold = 0, hold_now();
             say("'%s': the hold ends after 3 minutes; events still play here", C.fm.event);
@@ -892,12 +1016,14 @@ static void follower(const EvNow *e, uint64_t player, const char *area, uint64_t
         // the scenes it leads into here by themselves (chain_until) are this world's copies of the leader's: the hold goes
         // on through them, so that the leader's flags cannot change this world's copy of its chain either
         if (C.f_hold) C.f_hold = 0, C.chain_hold = 1, hold_now();
-        say("watched '%s' with member %d: over here %.1f s after the START came%s", C.fm.event, C.f_from, secs(C.f_t0, now),
+        Who w;
+        say("watched '%s' with %s: over here %.1f s after the START came%s", C.fm.event, who(C.f_from, &w), secs(C.f_t0, now),
             C.back && strcmp(C.home_area, area) ? "; going back" : "");
         C.f = C.back && strcmp(C.home_area, area) ? F_RETURN : F_IDLE;
         C.f_until = now + 30000;
         C.chain_from = C.f_from, C.chain_until = now + CHAIN_MS;
         return;
+    }
     case F_RETURN:
         if (now > C.f_until) {
             follow_end("could not go back within 30 s", now);
@@ -919,13 +1045,14 @@ static void follower(const EvNow *e, uint64_t player, const char *area, uint64_t
 // Link stands in the world this game reads the flag:
 //   - a change of its own (not a follow's, not this module's teleport) makes a new order and goes to the room as ERA,
 //     with the first story scene of the chain this game led into it (the Master Sword's, where it started) and its place;
-//   - the room's keeper (the lowest member id) repeats the room's era every 3 s, for players who join later; a game that
-//     hears an older order answers with its newest;
+//   - the room's host repeats the room's era every 3 s, and at once when a player comes; a game that hears an older
+//     order answers with its newest (orders: the file's top);
 //   - a game whose era is not the room's, once it has been free for 4 s, follows the change's scene where it started, if
 //     it started in this game's era (its own chain then takes this world into the other era, as it took the other
 //     player's); when there is no such scene, or it left this game in its era, it teleports into the room's era (follow
 //     mode): the scene's area of the other era (Market_Child -> Market_Adult) near where the scene started, else the
-//     place the message gives. The area's load sets the era.
+//     place the message gives. The area's load sets the era. So a player who joins a room of the other era is taken
+//     into it. A teleport the game refused does not count as one of the two tries.
 // A follower's own copy of a Master Sword scene changes its era with the leader's, so most of the time nobody is behind.
 enum { ERA_BEAT_MS = 3000, ERA_SETTLE_MS = 4000, ERA_REPLY_MS = 2000, ERA_EXPECT_MS = 60000, ERA_SWITCH_TRIES = 2 };
 
@@ -933,26 +1060,21 @@ static const char *era_name(int e) { return e < 0 ? "not known" : e ? "adult" : 
 
 static void on_era(int from, const uint8_t *b, size_t n, void *user) {
     (void)user;
+    if (from < 1 || from > COOP_PLAYERS || from == atomic_load(&C.self)) return;
     CoopEraMsg m;
     if (!coop_era_parse(b, n, &m)) {
-        static uint64_t said;
-        uint64_t now = plat_now_ms();
-        if (now - said >= 5000) said = now, esay("an ERA message of member %d does not parse (%zu bytes)", from, n);
+        coop_ext_log(from, "era: an ERA of %zu bytes from seat %d does not parse; dropped", n, from);
         return;
     }
-    if (from < 1 || from > COOP_MAX_MEMBERS || from == atomic_load(&C.self) || !(coop_game_shown() >> from & 1)) return;
     plat_mutex_lock(&C.lock);
-    if (!(C.e_win[from].any && C.e_win[from].epoch == m.epoch && m.seq <= C.e_win[from].seq)) {   // not a copy, not an old one
-        C.e_win[from].any = 1, C.e_win[from].epoch = m.epoch, C.e_win[from].seq = m.seq;
-        // the newest order wins; within one order the lowest member
-        if (!C.e_in_have || m.order > C.e_in.order || (m.order == C.e_in.order && from < C.e_in_from))
-            C.e_in = m, C.e_in_have = 1, C.e_in_from = from;
-        if (!C.e_low_have || m.order < C.e_low_order) C.e_low_have = 1, C.e_low_order = m.order, C.e_low_from = from;
+    if (win_take(&C.e_win[from], C.seat_gen[from], m.epoch, m.seq)) {   // not sent twice, not an older one
+        if (C.ne_in == NIN) memmove(C.e_in, C.e_in + 1, sizeof C.e_in[0] * (NIN - 1)), C.ne_in--;   // the oldest gives way
+        C.e_in[C.ne_in].m = m, C.e_in[C.ne_in].from = from, C.ne_in++;
     }
     plat_mutex_unlock(&C.lock);
 }
 
-static void queue_era(const CoopEraMsg *m, int copies) {
+static void queue_era(const CoopEraMsg *m) {
     uint8_t buf[COOP_ERA_MSG_MAX];
     size_t n = coop_era_pack(m, buf, sizeof buf);
     if (!n) {
@@ -969,20 +1091,11 @@ static void queue_era(const CoopEraMsg *m, int copies) {
                  !strcmp(back.scene_area, m->scene_area) && !strcmp(back.area, m->area) &&
                  !memcmp(back.xyz, m->xyz, sizeof back.xyz) && !memcmp(back.scene_xyz, m->scene_xyz, sizeof back.xyz));
     }
-    plat_mutex_lock(&C.lock);
-    int slot = -1;
-    for (int i = 0; i < NOUT && slot < 0; i++)
-        if (!C.out[i].used) slot = i;
-    if (slot >= 0) {
-        Out *o = &C.out[slot];
-        o->used = 1, o->copies = 3 - copies, o->t0 = plat_now_ms() - repeat_ms[o->copies], o->kind = COOP_K_ERA, o->len = (uint16_t)n;
-        memcpy(o->buf, buf, n);
-    }
-    plat_mutex_unlock(&C.lock);
+    queue_out(COOP_K_ERA, buf, n);
 }
 
 // The room's era as this game knows it, with the change's scene; the place area/xyz (NULL: the change's own).
-static void era_out(int change, const char *area, const float xyz[3], int copies) {
+static void era_out(int change, const char *area, const float xyz[3]) {
     CoopEraMsg m = C.e_last;
     m.epoch = C.epoch, m.seq = ++C.e_seq, m.order = C.e_order;
     m.flags = (uint8_t)((C.e_room == 1 ? COOP_ERA_ADULT : 0) | (change ? COOP_ERA_CHANGE : 0) | (C.e_last.flags & COOP_ERA_SCENE_ADULT));
@@ -990,22 +1103,31 @@ static void era_out(int change, const char *area, const float xyz[3], int copies
         snprintf(m.area, sizeof m.area, "%s", area);
         memcpy(m.xyz, xyz, sizeof m.xyz);
     }
-    queue_era(&m, copies);
+    queue_era(&m);
 }
 
-// A message from the room (the game thread): the newest order wins, within one order the lowest member.
-static void era_take(const CoopEraMsg *m, int from) {
+// A message from the room (the game thread): the newest order wins; within one order the host's word, then the lower
+// player id; an order far from this game's only from the host.
+static void era_take(const CoopEraMsg *m, int from, int host, uint64_t now) {
     int era = m->flags & COOP_ERA_ADULT ? 1 : 0;
-    if (m->order > C.e_order || C.e_room < 0 || (m->order == C.e_order && era != C.e_room && from < C.e_from)) {
+    int rel = order_rel(m->order, C.e_order);   // e_order is 0 until an order is known in this room
+    Who w;
+    if (rel == O_NEWER || (rel == O_FAR && from == host) || (rel == O_SAME && era != C.e_room && ranks_above(from, C.e_from))) {
         int was = C.e_room;
         C.e_order = m->order, C.e_room = era, C.e_from = from, C.e_last = *m;
         C.e_behind_at = 0;
+        if (!++C.e_change) C.e_change = 1;
         if (era != was || (m->flags & COOP_ERA_CHANGE))
-            esay("member %d %s: the room's era is %s (order %u%s%s%s, place '%s'); this game is %s", from,
+            esay("%s %s: the room's era is %s (order %u%s%s%s, place '%s'); this game is %s", who(from, &w),
                  m->flags & COOP_ERA_CHANGE ? "changed era" : "keeps the room's era", era_name(era), m->order,
                  m->scene[0] ? ", through its scene '" : "", m->scene, m->scene[0] ? "'" : "", m->area, era_name(C.e_mine));
-    } else if (m->order == C.e_order && era == C.e_room && from <= C.e_from) {
-        C.e_from = from, C.e_last = *m;   // the same era: a newer place (the keeper's beat)
+    } else if (rel == O_SAME && era == C.e_room && (from == C.e_from || ranks_above(from, C.e_from))) {
+        C.e_from = from, C.e_last = *m;   // the same era: a newer place (the host's beat)
+    } else if (rel == O_OLDER) {
+        C.e_low = from;
+    } else if (rel == O_FAR && now - C.e_far_said >= FAR_SAY_MS) {
+        C.e_far_said = now;
+        esay("%s sent order %u, far from this game's %u, and is not the room's host: dropped", who(from, &w), m->order, C.e_order);
     }
 }
 
@@ -1016,7 +1138,7 @@ static int area_listed(const char *area) {
 }
 
 // A place of the room's era: the area of the other era where the change's scene started (Xxx_Child <-> Xxx_Adult), near
-// where it started; else the place the message gives (the sender's at its change, or the keeper's now).
+// where it started; else the place the message gives (the sender's at its change, or the host's now).
 static void era_place(char out[COOP_CUT_AREA_MAX + 1], float xyz[3]) {
     const CoopEraMsg *m = &C.e_last;
     const char *from = C.e_room ? "_Child" : "_Adult", *to = C.e_room ? "_Adult" : "_Child";
@@ -1037,23 +1159,25 @@ static void era_place(char out[COOP_CUT_AREA_MAX + 1], float xyz[3]) {
 // This game's era changed from old to now (an area of the other era was loaded).
 static void era_changed(int old, int now_era, const char *area, const float here[3], uint64_t now) {
     int self = atomic_load(&C.self);
+    Who w;
     if (C.e_expect == now_era && now < C.e_expect_until) {
         C.e_expect = -1;
-        esay("now %s in '%s': caught up with the room's era (member %d's order %u)", era_name(now_era), area, C.e_from, C.e_order);
+        esay("now %s in '%s': caught up with the room's era (%s's order %u)", era_name(now_era), area, who(C.e_from, &w), C.e_order);
         return;
     }
     if (C.f != F_IDLE || now < C.chain_until) {
-        esay("now %s in '%s', with the scene of member %d this game followed (the room: %s, order %u)", era_name(now_era), area,
-             C.f != F_IDLE ? C.f_from : C.chain_from, era_name(C.e_room), C.e_order);
+        esay("now %s in '%s', with the scene of %s this game followed (the room: %s, order %u)", era_name(now_era), area,
+             who(C.f != F_IDLE ? C.f_from : C.chain_from, &w), era_name(C.e_room), C.e_order);
         return;
     }
     if (now_era == C.e_room) {
-        esay("now %s in '%s': the room's era (member %d's order %u)", era_name(now_era), area, C.e_from, C.e_order);
+        esay("now %s in '%s': the room's era (%s's order %u)", era_name(now_era), area, who(C.e_from, &w), C.e_order);
         return;
     }
     // a change of this game's own: a new order, to the room with the scene of the chain it led into it
     C.e_order++;
     C.e_room = now_era, C.e_from = self;
+    if (!++C.e_change) C.e_change = 1;
     CoopEraMsg *l = &C.e_last;
     memset(l, 0, sizeof *l);
     int scene = C.lc_name[0] && now < C.lc_until && C.lc_adult == old;
@@ -1065,7 +1189,7 @@ static void era_changed(int old, int now_era, const char *area, const float here
     }
     snprintf(l->area, sizeof l->area, "%s", area);
     memcpy(l->xyz, here, sizeof l->xyz);
-    era_out(1, NULL, NULL, 3);
+    era_out(1, NULL, NULL);
     esay("this game went from %s to %s in '%s' at %.1f %.1f %.1f%s%s%s: sent to the room (order %u)", era_name(old),
          era_name(now_era), area, here[0], here[1], here[2], scene ? " after its scene '" : " (no story scene of its own led into it)",
          scene ? l->scene : "", scene ? "'" : "", C.e_order);
@@ -1077,11 +1201,19 @@ static void era_catch_up(const EvNow *e, uint64_t player, const char *area, uint
         C.e_behind_at = 0;
         return;
     }
-    uint32_t tag = C.e_order + 1;
+    uint32_t tag = C.e_change;
+    Who w;
     if (C.e_switch_tried != tag) C.e_switch_n = 0;
     int teleporting = C.e_expect >= 0 && now < C.e_expect_until;
-    int free = player && area[0] && (coop_game_running() || !cfg_bool("NX2NAVI_COOP")) && !e->ev && !(e->flags & 0x4000) &&
-               !dbg_busy() && C.f == F_IDLE && now >= C.chain_until && !teleporting;
+    if (teleporting && !dbg_busy() && dbg_arrivals() == C.e_arrivals) {   // the game refused it: not a try
+        char st[160];
+        dbg_status(st);
+        C.e_expect = -1, teleporting = 0;
+        if (C.e_switch_n > 0) C.e_switch_n--;
+        esay("the teleport into the room's era did not happen (the debug tools say: %s); asked again once this game is free", st);
+    }
+    int free = player && area[0] && room_may_act() && !e->ev && !(e->flags & 0x4000) && !dbg_busy() && C.f == F_IDLE &&
+               now >= C.chain_until && !teleporting;
     if (!free) {
         C.e_behind_at = 0;
         return;
@@ -1089,8 +1221,8 @@ static void era_catch_up(const EvNow *e, uint64_t player, const char *area, uint
     if (!C.e_behind_at) {
         C.e_behind_at = now;
         if (C.e_said_behind != tag)
-            esay("this game is %s, the room %s (member %d's order %u): it catches up once free for %d s", era_name(C.e_mine),
-                 era_name(C.e_room), C.e_from, C.e_order, ERA_SETTLE_MS / 1000);
+            esay("this game is %s, the room %s (%s's order %u): it catches up once free for %d s", era_name(C.e_mine),
+                 era_name(C.e_room), who(C.e_from, &w), C.e_order, ERA_SETTLE_MS / 1000);
         C.e_said_behind = tag;
         return;
     }
@@ -1106,13 +1238,13 @@ static void era_catch_up(const EvNow *e, uint64_t player, const char *area, uint
             snprintf(s.event, sizeof s.event, "%s", m->scene);
             snprintf(s.area, sizeof s.area, "%s", m->scene_area);
             memcpy(s.xyz, m->scene_xyz, sizeof s.xyz);
-            const CoopStory *st = coop_events_story(s.event);
-            s.flags = (uint8_t)((scene_adult ? COOP_CUT_ADULT : 0) | (st && st->movie ? COOP_CUT_MOVIE : 0));
-            esay("behind the room (%s since member %d's order %u): its change came through the scene '%s' in '%s': followed "
-                 "here, so that this world changes era the same way", era_name(C.e_room), C.e_from, C.e_order, s.event, s.area);
+            s.flags = (uint8_t)(scene_adult ? COOP_CUT_ADULT : 0);   // consider() takes the movie bit from this game's table
+            esay("behind the room (%s since %s's order %u): its change came through the scene '%s' in '%s': followed "
+                 "here, so that this world changes era the same way", era_name(C.e_room), who(C.e_from, &w), C.e_order, s.event,
+                 s.area);
             if (consider(&s, C.e_from, 2, player, area, now)) return;
         } else {
-            esay("the scene '%s' of member %d's change started %s, and this game is %s: not followed", m->scene, C.e_from,
+            esay("the scene '%s' of %s's change started %s, and this game is %s: not followed", m->scene, who(C.e_from, &w),
                  era_name(scene_adult), era_name(C.e_mine));
         }
     }
@@ -1141,13 +1273,14 @@ static void era_catch_up(const EvNow *e, uint64_t player, const char *area, uint
     }
     esay("teleporting from '%s' to '%s' near %.1f %.1f %.1f (try %d): an area of the room's era makes this game %s too",
          area, target, xyz[0], xyz[1], xyz[2], C.e_switch_n, era_name(C.e_room));
+    C.e_arrivals = dbg_arrivals();
     dbg_warp_near(target, xyz, "");
     C.e_expect = C.e_room, C.e_expect_until = now + ERA_EXPECT_MS;
 }
 
 // The game thread, every frame in a room, alone in it too (the era's mode follow or scene).
 static void era_frame(const EvNow *e, uint64_t player, const char *area, uint64_t now) {
-    int self = atomic_load(&C.self);
+    int self = atomic_load(&C.self), host = atomic_load(&C.host);
     unsigned serial = coop_game_save_serial();
     if (serial != C.e_serial) {
         C.e_serial = serial;
@@ -1156,7 +1289,7 @@ static void era_frame(const EvNow *e, uint64_t player, const char *area, uint64_
     }
     // Link placed in the world, no load (progress sync's gate): during a change of area the flag is already the next
     // area's while Link's actor is the old one or a new one at the origin, so neither is read then
-    int in_world = player && area[0] && (coop_game_running() || !cfg_bool("NX2NAVI_COOP"));
+    int in_world = player && area[0] && (coop_game_running() || !coop_on());
     int v = in_world ? flag_bool(COOP_ERA_FLAG) : -1, era = v < 0 ? -1 : !v;
     float here[3] = {0, 0, 0};
     if (in_world) rd(player + A_POS, here, 12);
@@ -1165,21 +1298,22 @@ static void era_frame(const EvNow *e, uint64_t player, const char *area, uint64_
         dbg_flags_refresh();
         dbg_names(NULL);
     }
-    CoopEraMsg m;
-    int have = 0, from = 0, low = 0, reset = 0;
-    uint32_t low_order = 0;
+    struct { CoopEraMsg m; int from; } in[NIN];
     plat_mutex_lock(&C.lock);
-    if (C.e_reset) reset = 1, C.e_reset = 0, C.e_in_have = C.e_low_have = 0;   // another room: its era is learnt anew
-    if (C.e_in_have) m = C.e_in, from = C.e_in_from, have = 1, C.e_in_have = 0;
-    if (C.e_low_have) low = C.e_low_from, low_order = C.e_low_order, C.e_low_have = 0;
+    int reset = C.e_reset, greet = C.e_greet, nin = C.ne_in;
+    memcpy(in, C.e_in, sizeof in[0] * (size_t)nin);
+    C.e_reset = C.e_greet = 0, C.ne_in = 0;
     plat_mutex_unlock(&C.lock);
-    if (reset) {   // this game's era is read again too: it may have changed while no room ran this module
-        C.e_order = 0, C.e_room = -1, C.e_from = 0, C.e_expect = -1, C.e_behind_at = 0, C.e_mine = -1;
-        C.e_scene_tried = C.e_switch_tried = C.e_said_behind = C.e_said_stuck = 0, C.e_switch_n = 0;
+    if (reset) {   // another room: its era is learnt anew, and this game's own is read again (it may have changed meanwhile)
+        C.e_order = 0, C.e_room = -1, C.e_from = 0, C.e_expect = -1, C.e_behind_at = 0, C.e_mine = -1, C.e_low = 0;
+        C.e_scene_tried = C.e_switch_tried = C.e_said_behind = C.e_said_stuck = 0, C.e_switch_n = 0, C.e_greet_due = 0;
+        C.e_beat_at = 0;
+        if (!++C.e_change) C.e_change = 1;
         memset(&C.e_last, 0, sizeof C.e_last);
     }
-    if (have) era_take(&m, from);
+    for (int i = 0; i < nin; i++) era_take(&in[i].m, in[i].from, host, now);
     if (era >= 0) {
+        Who w;
         if (C.e_mine < 0) {   // the first reading of this save
             C.e_mine = era;
             if (C.e_room < 0) {   // nothing from the room yet: the room's era starts as this game's
@@ -1188,28 +1322,32 @@ static void era_frame(const EvNow *e, uint64_t player, const char *area, uint64_
                 snprintf(C.e_last.area, sizeof C.e_last.area, "%s", area);
                 memcpy(C.e_last.xyz, here, sizeof here);
             }
-            esay("this game is %s (in '%s'); the room's era: %s (order %u, member %d)", era_name(era), area, era_name(C.e_room),
-                 C.e_order, C.e_from);
+            esay("this game is %s (in '%s'); the room's era: %s (order %u, %s)", era_name(era), area, era_name(C.e_room),
+                 C.e_order, who(C.e_from, &w));
         } else if (era != C.e_mine) {
             int old = C.e_mine;
             C.e_mine = era;
             era_changed(old, era, area, here, now);
         }
     }
-    // a member that still has an older order hears the newest
-    if (low && low_order < C.e_order && C.e_room >= 0 && now >= C.e_reply_at) {
+    // a player that still has an older order hears the newest
+    if (C.e_low && C.e_room >= 0 && now >= C.e_reply_at) {
+        Who w;
         C.e_reply_at = now + ERA_REPLY_MS;
-        era_out(0, NULL, NULL, 1);
-        esay("member %d still has order %u: the room's newest (%u, %s) sent", low, low_order, C.e_order, era_name(C.e_room));
+        era_out(0, NULL, NULL);
+        esay("%s still has an older order: the room's newest (%u, %s) sent", who(C.e_low, &w), C.e_order, era_name(C.e_room));
+        C.e_low = 0;
     }
-    int keeper = self && lowest_id(atomic_load(&C.present)) == self;
+    int keeper = self && self == host;
     if (keeper != C.e_keeper) {
         C.e_keeper = keeper;
-        esay("%s", keeper ? "this game keeps the room's era (the lowest member id): it goes out every 3 s" : "another member keeps the room's era");
+        esay("%s", keeper ? "this game keeps the room's era (the room's host): it goes out every 3 s" : "the room's host keeps the room's era");
     }
-    if (keeper && in_world && C.e_room >= 0 && C.e_mine >= 0 && now >= C.e_beat_at) {
-        C.e_beat_at = now + ERA_BEAT_MS;
-        era_out(0, C.e_mine == C.e_room ? area : NULL, here, 1);   // its own place when it is of the room's era
+    if (greet) C.e_greet_due = 1;
+    if (!keeper) C.e_greet_due = 0;
+    if (keeper && in_world && C.e_room >= 0 && C.e_mine >= 0 && (now >= C.e_beat_at || C.e_greet_due)) {
+        C.e_beat_at = now + ERA_BEAT_MS, C.e_greet_due = 0;
+        era_out(0, C.e_mine == C.e_room ? area : NULL, here);   // its own place when it is of the room's era
     }
     era_catch_up(e, player, area, now);
 }
@@ -1218,7 +1356,7 @@ static void run_tests(Cpu *c, const EvNow *e, uint64_t player, const char *area,
     if (player && !C.player_at) C.player_at = now;
     if (!C.other_at && coop_puppet_world_others() > 0) {
         C.other_at = now;
-        say("another member is in the game world (%.1f s after Link)", secs(C.player_at, now));
+        say("another player is in the game world (%.1f s after Link)", secs(C.player_at, now));
     }
     for (int i = 0; i < C.ntest; i++) {
         Test *t = &C.test[i];
@@ -1247,10 +1385,8 @@ static void run_tests(Cpu *c, const EvNow *e, uint64_t player, const char *area,
             snprintf(m.area, sizeof m.area, "%s", t->area);
             memcpy(m.xyz, t->xyz, sizeof m.xyz);
             m.flags = (uint8_t)(player && link_adult(player) ? COOP_CUT_ADULT : 0);
-            const CoopStory *s = coop_events_story(m.event);
-            if (s && s->movie) m.flags |= COOP_CUT_MOVIE;
-            say("test %d: a START as if from member 9: '%s' in '%s'", i + 1, m.event, m.area);
-            consider(&m, 9, 1, player, area, now);
+            say("test %d: a START as if from another player: '%s' in '%s'", i + 1, m.event, m.area);
+            consider(&m, 0, 1, player, area, now);
         }
     }
 }
@@ -1263,6 +1399,15 @@ void coop_cutscene_frame(Cpu *c, uint64_t player, const char *area) {
         return;
     }
     uint64_t now = plat_now_ms();
+    plat_mutex_lock(&C.lock);
+    int room_changed = C.f_reset;
+    C.f_reset = 0;
+    plat_mutex_unlock(&C.lock);
+    if (room_changed) {   // the last room's players are gone: what this game followed of theirs ends here
+        if (C.f != F_IDLE) follow_end("this game is in another room now (or in none)", now);
+        if (C.chain_hold) C.chain_hold = 0, hold_now();
+        C.chain_until = 0, C.chain_from = 0;
+    }
     EvNow e;
     ev_now(&e);
     if (C.ntest) run_tests(c, &e, player, area, now);
@@ -1276,13 +1421,15 @@ void coop_cutscene_frame(Cpu *c, uint64_t player, const char *area) {
     plat_mutex_unlock(&C.lock);
     if (have) consider(&m, from, fake, player, area, now);
     if (have_end && C.f != F_IDLE && end_from == C.f_from && !strcmp(end.event, C.fm.event)) {
+        Who w;
         if (C.f == F_WAIT) follow_end("the other player's scene ended before this game was free", now);
-        else say("member %d's '%s' is over there; this game's copy goes on (%s)", end_from, end.event, f_names[C.f]);
+        else say("the scene '%s' of %s is over there; this game's copy goes on (%s)", end.event, who(end_from, &w), f_names[C.f]);
     }
     follower(&e, player, area, now);
     if (C.chain_hold && C.f == F_IDLE && now >= C.chain_until) {   // the chain of the followed scene is over here
+        Who w;
         C.chain_hold = 0, hold_now();
-        say("no more scenes of member %d's chain here: the room's values are taken again", C.chain_from);
+        say("no more scenes of the chain of %s here: the room's values are taken again", who(C.chain_from, &w));
     }
     if ((C.era_mode == COOP_ERA_FOLLOW || C.era_mode == COOP_ERA_SCENE) && atomic_load(&C.self) > 0)
         era_frame(&e, player, area, now);   // the era: after the follower, which a catch-up may start
