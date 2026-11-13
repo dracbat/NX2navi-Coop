@@ -10,6 +10,8 @@ stands two metres beside the game's Link, says a chat line and asks for the game
 
 Modes (any together):
     --flags HASH[,HASH...]   send those flags (hex hashes) with the value 1, as the room's progress
+    --flags-at S:HASH[,HASH...]  the same, S seconds after the game's Link was first seen in the world (may be given
+                             again for other times)
     --expect-refused         the game must refuse this peer for its version (with --protocol 1: NX2navi's own)
     --separation             first, from a second port, say HELLO with protocol 1, which the game must refuse
     --echo                   (the game with NX2NAVI_COOP_EXT_TEST=echo) send every message of the vectors file and get
@@ -20,8 +22,13 @@ Modes (any together):
     --pick-at S:COLOUR       PICK that colour S seconds after the game's Link was first seen in the world
     --kill-after-damage      answer each DAMAGE the game sends with a KILL of the same enemy
     --cut EVENT:AREA:X,Y,Z@S a story cutscene's START, S seconds after the game's Link was first seen
-    --time HH:MM@S           a jump of the time of day, S seconds after the game's Link was first seen
-    --era child|adult@S      a change of era, S seconds after the game's Link was first seen
+    --cut-movie              ... with the MOVIE bit set, whatever the scene is (the game must go by its own table)
+    --time HH:MM[/ORDER]@S   a jump of the time of day, S seconds after the game's Link was first seen, with the order
+                             given (default: one more than the newest heard); may be given again
+    --damage-flood N@S       N DAMAGE messages for made-up enemies of the game's area at once, S seconds after the
+                             game's Link was first seen (the game keeps 16 of one sender's at most)
+    --era child|adult[:AREA[:X,Y,Z]]@S   a change of era, S seconds after the game's Link was first seen, with a place of
+                             that era (default: where the game's Link stands)
 
 It prints what the game sends, with the kinds' names, and ends with "peer: ok" or "peer: FAILED" for what its modes
 check; python's exit code says the same.
@@ -644,6 +651,7 @@ def main():
     ap.add_argument('--expect-refused', action='store_true')
     ap.add_argument('--separation', action='store_true')
     ap.add_argument('--flags', default='')
+    ap.add_argument('--flags-at', action='append', default=[])
     ap.add_argument('--echo', action='store_true')
     ap.add_argument('--vectors', type=Path, default=VECTORS)
     ap.add_argument('--mirror', nargs='?', const=2.0, type=float, default=None)
@@ -651,7 +659,9 @@ def main():
     ap.add_argument('--pick-at', default=None)
     ap.add_argument('--kill-after-damage', action='store_true')
     ap.add_argument('--cut', default=None)
-    ap.add_argument('--time', default=None)
+    ap.add_argument('--cut-movie', action='store_true')
+    ap.add_argument('--time', action='append', default=[])
+    ap.add_argument('--damage-flood', default=None)
     ap.add_argument('--era', default=None)
     ap.add_argument('--write-vectors', type=Path, default=None)
     ap.add_argument('--check-vectors', type=Path, default=None)
@@ -706,13 +716,23 @@ def main():
         what, at = parse_at(a.cut)
         ev, area, xyz = what.split(':', 2)
         timed.append([at, ('cut', ev.encode(), area.encode(), [f32(float(v)) for v in xyz.split(',')]), False])
-    if a.time:
-        what, at = parse_at(a.time)
-        hh, mm = what.split(':')
-        timed.append([at, ('time', int(hh) * 3600 + int(mm) * 60), False])
+    for spec in a.time:
+        what, at = parse_at(spec)
+        hhmm, _, order = what.partition('/')
+        hh, mm = hhmm.split(':')
+        timed.append([at, ('time', int(hh) * 3600 + int(mm) * 60, int(order, 0) if order else None), False])
+    if a.damage_flood:
+        what, at = parse_at(a.damage_flood)
+        timed.append([at, ('flood', int(what)), False])
+    for spec in a.flags_at:
+        s, _, hashes = spec.partition(':')
+        timed.append([float(s), ('flags', [int(h, 16) for h in hashes.split(',') if h]), False])
     if a.era:
         what, at = parse_at(a.era)
-        timed.append([at, ('era', what == 'adult'), False])
+        era, _, place = what.partition(':')
+        area, _, xyz = place.partition(':')
+        timed.append([at, ('era', era == 'adult', area.encode(), [f32(float(v)) for v in xyz.split(',')] if xyz else [0.0] * 3),
+                      False])
     seen = {}                 # kind -> count received
     orders = {'time': 0, 'era': 0}
     mirrored = kills = 0
@@ -759,21 +779,41 @@ def main():
                 if what[0] == 'pick':
                     send(K_PICK, pick_pack(what[1]))
                     print(f'peer: PICK {COLOUR_NAMES[what[1]] if what[1] < 4 else "auto"}')
+                elif what[0] == 'flags':
+                    if schema is None:   # the game does not share progress (yet): tried again at the next pass
+                        t[2] = False
+                        continue
+                    send(K_FLAGS, struct.pack('<I', schema) + b''.join(struct.pack('<II', h, 1) for h in what[1]))
+                    print(f'peer: sent {len(what[1])} flags as set: {", ".join(f"{h:08x}" for h in what[1])}')
                 elif what[0] == 'cut':
-                    send(K_CUTSCENE, cut_pack({'op': 1, 'flags': 0, 'epoch': epoch, 'seq': seq, 'event': what[1],
-                                               'area': what[2], 'xyz': what[3]}))
-                    print(f'peer: CUTSCENE START {what[1].decode()} in {what[2].decode()}')
+                    send(K_CUTSCENE, cut_pack({'op': 1, 'flags': 2 if a.cut_movie else 0, 'epoch': epoch, 'seq': seq,
+                                               'event': what[1], 'area': what[2], 'xyz': what[3]}))
+                    print(f'peer: CUTSCENE START {what[1].decode()} in {what[2].decode()}' + (', MOVIE bit set' if a.cut_movie else ''))
                 elif what[0] == 'time':
-                    orders['time'] += 1
-                    send(K_TIME, time_pack({'epoch': epoch, 'seq': seq, 'order': orders['time'], 'tod': what[1], 'flags': 1}))
-                    print(f'peer: TIME jump to {what[1] // 3600:02d}:{what[1] // 60 % 60:02d}, order {orders["time"]}')
+                    order = what[2] if what[2] is not None else orders['time'] + 1
+                    if what[2] is None:
+                        orders['time'] = order
+                    send(K_TIME, time_pack({'epoch': epoch, 'seq': seq, 'order': order & 0xFFFFFFFF, 'tod': what[1], 'flags': 1}))
+                    print(f'peer: TIME jump to {what[1] // 3600:02d}:{what[1] // 60 % 60:02d}, order {order & 0xFFFFFFFF}')
+                elif what[0] == 'flood':
+                    area = (host_pose[0] if host_pose else '').encode()
+                    for i in range(what[1]):
+                        seq += 1
+                        send(K_DAMAGE, kill_pack(K_DAMAGE, {'epoch': epoch, 'eseq': seq, 'area': area, 'inst': 0x5EED0000 + i,
+                                                            'hash': kill_name_hash(b'Enemy_Made_Up'), 'raw': 1, 'flags': 0}))
+                    print(f'peer: {what[1]} DAMAGE for made-up enemies of {area.decode()} sent at once')
                 else:
                     orders['era'] += 1
-                    place = host_pose or ('', 0.0, 0.0, 0.0)
+                    if what[2]:
+                        area, xyz = what[2], what[3]
+                    else:
+                        place = host_pose or ('', 0.0, 0.0, 0.0)
+                        area, xyz = place[0].encode(), [f32(v) for v in place[1:]]
                     send(K_ERA, era_pack({'epoch': epoch, 'seq': seq, 'order': orders['era'], 'flags': 2 | (1 if what[1] else 0),
                                           'scene': b'', 'scene_area': b'', 'scene_xyz': [0.0] * 3,
-                                          'area': place[0].encode(), 'xyz': [f32(v) for v in place[1:]]}))
-                    print(f'peer: ERA change to {"adult" if what[1] else "child"}, order {orders["era"]}')
+                                          'area': area, 'xyz': xyz}))
+                    print(f'peer: ERA change to {"adult" if what[1] else "child"} at {area.decode() or "(nowhere)"}, '
+                          f'order {orders["era"]}')
         if a.echo and welcomed and world_at and now - world_at >= 2.0 and now - last_echo >= 0.25:
             last_echo = now
             if echo_queue:
