@@ -42,6 +42,10 @@ const char *dbg_event_name(int i);
 void dbg_event_start(const char *name);
 int dbg_busy(void);
 void dbg_status(char out[160]);
+// Co-op's gate (coop_game.c gate), any thread: 1 from the moment a teleport is asked for until a few seconds after it
+// arrived, was refused or was given up. The game's play clock jumps when an area is changed this way, and that jump is
+// no other save being loaded.
+int dbg_teleport_recent(void);
 // Co-op cutscenes (coop_cutscene.c): a teleport to the start position of area nearest to near (metres;
 // NULL: the area's first), with boot ("" none) reserved as the event the game plays when Link arrives (the game data
 // text Sequence_ReservedBootEventName, which the plain teleport leaves empty). While an event plays after the arrival,

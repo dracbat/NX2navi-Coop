@@ -557,6 +557,12 @@ static struct {
     int tries;                           // start positions tried after falls
 } warp;
 static char status[160];                 // q_lock: the last thing that happened, for the menu
+// dbg_teleport_recent: plat_now_ms at which the last teleport's window ends, UINT64_MAX while one is asked for or under
+// way (atomic: co-op's gate reads it on the present thread)
+static uint64_t teleport_quiet_at;
+enum { TELEPORT_QUIET_MS = 8000 };
+
+int dbg_teleport_recent(void) { return plat_now_ms() < __atomic_load_n(&teleport_quiet_at, __ATOMIC_ACQUIRE); }
 
 static void status_set(const char *fmt, const char *a, const char *b) {
     plat_mutex_lock(&q_lock);
@@ -581,6 +587,7 @@ void dbg_warp(const char *area, const char *pos) {
         warp.boot[0] = 0, warp.has_near = 0;
         warp.tries = 0, warp.retry_until = 0, warp.waited = 0, warp.at = 0;
         warp.state = W_ASKED;
+        __atomic_store_n(&teleport_quiet_at, UINT64_MAX, __ATOMIC_RELEASE);
     }
     plat_mutex_unlock(&q_lock);
 }
@@ -595,6 +602,7 @@ void dbg_warp_near(const char *area, const float near[3], const char *boot) {
         if (near) memcpy(warp.near, near, sizeof warp.near);
         warp.tries = 0, warp.retry_until = 0, warp.waited = 0, warp.at = 0;
         warp.state = W_ASKED;
+        __atomic_store_n(&teleport_quiet_at, UINT64_MAX, __ATOMIC_RELEASE);
     }
     plat_mutex_unlock(&q_lock);
 }
@@ -629,7 +637,18 @@ void dbg_event_start(const char *name) {
 static const char REFUSED[] = "The game refused %s: it is in a cutscene, a conversation or a menu, or Link cannot take part "
                               "now (swimming, in the air). Try again once he stands free.";
 
+static void warp_step(Cpu *c, uint64_t tick);
+
+// A teleport's window (dbg_teleport_recent) ends TELEPORT_QUIET_MS after the teleport did: arrived and settled, refused or
+// given up.
 static void warp_tick(Cpu *c, uint64_t tick) {
+    int was = warp.state;
+    warp_step(c, tick);
+    if (was != W_IDLE && warp.state == W_IDLE)
+        __atomic_store_n(&teleport_quiet_at, plat_now_ms() + TELEPORT_QUIET_MS, __ATOMIC_RELEASE);
+}
+
+static void warp_step(Cpu *c, uint64_t tick) {
     if (warp.event[0]) {
         char name[80];
         snprintf(name, sizeof name, "%s", warp.event);

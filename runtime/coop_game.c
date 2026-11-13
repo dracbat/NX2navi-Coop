@@ -547,16 +547,21 @@ static int gate(uint64_t mgr, float pos[3]) {
     int loading = G.loading_entry && LD8(G.loading_entry + B_CURRENT);
     unsigned moving = 0;
     for (int i = 0; i < 4; i++) moving |= (unsigned)(G.transition_entry[i] && LD8(G.transition_entry[i] + B_CURRENT)) << i;
+    // A teleport of the debug tools (the menu's, or one co-op makes: to a scene another player plays, back from it, into
+    // the room's era) changes area as the game's own scripts do, and the clock jumps then as well: while a save is
+    // played, that is the same save, so its table and the sharing go on
+    int teleport = G.loaded && dbg_teleport_recent();
     if (clock != G.clock) {
         // the clock counts seconds one by one, on the title screen too; any other change is a save being loaded (a load,
         // a new game, the same save again from where it was saved), which also sets the flags: play starts at the next
         // tick after one
         int tick = clock > G.clock && clock - G.clock <= 5;
-        if (!tick) unbind(), G.loaded = 1;
+        if (!tick && teleport) rt_log("coop: the game's clock jumped at a teleport: the same save is played on");
+        if (!tick && !teleport) unbind(), G.loaded = 1;
         G.clock = clock;
         G.clock_at = tick ? now : 0;
     }
-    if (loading) unbind(), G.loaded = 1;
+    if (loading && !teleport) unbind(), G.loaded = 1;
     G.player = player_in_world(pos);
     G.gate = G.loaded && G.player && !loading && !moving && G.clock_at && now - G.clock_at < CLOCK_MS;
     __atomic_store_n(&running, G.gate, __ATOMIC_RELEASE);
