@@ -2460,6 +2460,20 @@ PlatUdp *plat_udp_open(uint16_t port, int dual_stack) {
     return u;
 }
 
+PlatUdp *plat_udp_open_loopback(uint16_t port) {
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return NULL;
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(port)};
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    PlatUdp *u = bind(fd, (struct sockaddr *)&a, sizeof a) == 0 ? malloc(sizeof *u) : NULL;
+    if (!u) {
+        close(fd);
+        return NULL;
+    }
+    u->fd = fd, u->v6 = 0;
+    return u;
+}
+
 uint16_t plat_udp_port(const PlatUdp *u) {
     struct sockaddr_storage ss;
     socklen_t len = sizeof ss;
