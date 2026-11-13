@@ -16,7 +16,8 @@
 //   ROSTER   u8 count, count x u64 id                the host's list, the host first
 //   POSE     u32 number, the pose (pose_put)         unreliable, 20 a second while Link is in the world, 2 a second else
 //   CHAT     text, UTF-8, at most COOP_CHAT_CAP      to everyone on the list
-//   from COOP_GAME_KIND on: the game layer's (coop_game.c), passed through
+//   from COOP_GAME_KIND on: the game layer's (coop_game.c), passed through; from COOP_EXT_KIND on, those of NX2navi
+//   Co-op's modules (coop_ext.c)
 // Steam vouches for the sender of every message (its id is the Steam account's) and encrypts them; nothing here adds
 // to that. Every length is checked before a body is read, a float that is not finite ends the message, and a name or
 // a chat line is shown with its control characters replaced.
@@ -332,6 +333,8 @@ static void on_message(uint64_t from, const uint8_t *d, size_t n) {
         Player *p = player_of(from);
         name_player(p);
         chat_line(p->name, text, 0, 0);
+    } else if (kind >= COOP_EXT_KIND) {
+        coop_ext_message(from, kind, b, n);
     } else if (kind >= COOP_GAME_KIND) {
         coop_game_message(from, kind, b, n);
     }
@@ -594,6 +597,7 @@ static void coop_main(void *arg) {
         if (!on) {
             net_down();
             if (G.state != COOP_OFF) G.state = COOP_OFF, G.note = COOP_NOTE_NONE, publish(now);
+            coop_ext_step(now);
             plat_sleep_ms(200);
             continue;
         }
@@ -632,6 +636,7 @@ static void coop_main(void *arg) {
         }
         G.net->pump(on_event, NULL);
         tick(now);
+        coop_ext_step(now);
         drain_outbox();
         publish(now);
         plat_sleep_ms(STEP_MS);

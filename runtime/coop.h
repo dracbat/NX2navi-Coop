@@ -124,6 +124,10 @@ int coop_post(uint64_t to, uint8_t kind, const void *data, size_t n, int reliabl
 void coop_game_message(uint64_t from, uint8_t kind, const uint8_t *data, size_t n);
 void coop_game_joined(uint64_t id);
 void coop_game_room(int in_room);
+// NX2navi Co-op's modules (coop_ext.c), on the co-op thread: a message of their kinds from a player of the room, and
+// every step of the thread.
+void coop_ext_message(uint64_t from, uint8_t kind, const uint8_t *data, size_t n);
+void coop_ext_step(uint64_t now_ms);
 
 #ifdef __cplusplus
 }
