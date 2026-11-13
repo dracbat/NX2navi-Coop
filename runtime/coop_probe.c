@@ -388,28 +388,51 @@ static void check_vector(const char *kind, char *rest, int line) {
         size_t k = coop_seal(c, sizeof c, mk, src, dst, hex64(t[3]), (uint32_t)strtoul(t[4], NULL, 0), kd, b, (size_t)mn);
         CHECK(k == (size_t)pn && !memcmp(c, a, k), "vector sealed %s: seals to the same bytes (line %d)", name, line);
     } else if (!strcmp(kind, "pos")) {
-        // pos <name> <payload> <pseq> <t_ms> <flags> <area hex|-> <x> <y> <z> <yaw> <node hex:frame>...
+        // pos <name> <payload> <pseq> <t_ms> <flags> <area hex|-> <x> <y> <z> <yaw> <colour> <want> <place> <upper>
+        //     <gear sig> <node hex:frame>... <d<slot>=<state>:<name hex>>... <s<slot>=<name hex>>...
         char *payload = next_token(&rest), *pseq = next_token(&rest), *t_ms = next_token(&rest), *flags = next_token(&rest);
-        char *area = next_token(&rest), *f[4];
+        char *area = next_token(&rest), *f[4], *v3[5];
         for (int i = 0; i < 4; i++) f[i] = next_token(&rest);
+        for (int i = 0; i < 5; i++) v3[i] = next_token(&rest);
         int pn = unhex(payload, a, sizeof a), an = area ? unhex(area, b, COOP_POS_TEXT) : -1;
         CoopPos p;
-        if (pn < 0 || an < 0 || !f[3]) FAIL_RET("vector pos %s does not parse (line %d)", name, line);
-        CHECK(coop_pos_parse(a, (size_t)pn, &p), "vector pos %s: parses (line %d)", name, line);
+        CoopGear g, want_g;
+        memset(&want_g, 0, sizeof want_g);
+        if (pn < 0 || an < 0 || !v3[4]) FAIL_RET("vector pos %s does not parse (line %d)", name, line);
+        CHECK(coop_pos_parse_gear(a, (size_t)pn, &p, &g), "vector pos %s: parses (line %d)", name, line);
         int ok = p.pseq == (uint32_t)strtoul(pseq, NULL, 10) && p.t_ms == (uint32_t)strtoul(t_ms, NULL, 10) && p.flags == atoi(flags) &&
                  strlen(p.area) == (size_t)an && !memcmp(p.area, b, (size_t)an) && p.pos[0] == strtof(f[0], NULL) &&
-                 p.pos[1] == strtof(f[1], NULL) && p.pos[2] == strtof(f[2], NULL) && p.yaw == strtof(f[3], NULL);
+                 p.pos[1] == strtof(f[1], NULL) && p.pos[2] == strtof(f[2], NULL) && p.yaw == strtof(f[3], NULL) &&
+                 p.colour == atoi(v3[0]) && p.want == atoi(v3[1]) && p.place == atoi(v3[2]) && p.upper == atoi(v3[3]) &&
+                 p.gear_sig == (uint32_t)strtoul(v3[4], NULL, 10);
         int ns = 0;
-        for (char *s; (s = next_token(&rest)); ns++) {
+        for (char *s; (s = next_token(&rest));) {
+            char *eq = strchr(s, '=');
+            if (eq) {   // the gear: d<slot>=<state>:<name hex> (a hand item) or s<slot>=<name hex> (a body item)
+                int dyn = s[0] == 'd', slot = atoi(s + 1);
+                char *colon = dyn ? strchr(eq, ':') : NULL, *hexname = dyn ? colon : eq;
+                if ((!dyn && s[0] != 's') || slot < 0 || slot >= (dyn ? COOP_POS_GEAR_DYN : COOP_POS_GEAR_STAT) || !hexname)
+                    FAIL_RET("vector pos %s: bad gear %s (line %d)", name, s, line);
+                char *dst = dyn ? want_g.dyn[slot] : want_g.stat[slot];
+                int nn = unhex(hexname + 1, (uint8_t *)dst, COOP_POS_TEXT);
+                if (nn <= 0) FAIL_RET("vector pos %s: bad gear name %s (line %d)", name, s, line);
+                dst[nn] = 0;
+                if (dyn) want_g.state[slot] = (uint8_t)atoi(eq + 1);
+                continue;
+            }
             char *colon = strchr(s, ':');
             if (!colon || ns >= COOP_POS_SLOTS) FAIL_RET("vector pos %s: bad slot %s (line %d)", name, s, line);
             *colon = 0;
             int nn = unhex(s, c, COOP_POS_TEXT);
             ok &= nn >= 0 && strlen(p.slot[ns].node) == (size_t)nn && !memcmp(p.slot[ns].node, c, (size_t)nn) &&
                   p.slot[ns].frame == strtof(colon + 1, NULL);
+            ns++;
         }
         CHECK(ok && p.nslots == ns, "vector pos %s: fields (line %d)", name, line);
-        size_t k = coop_pos_pack(c, sizeof c, &p);
+        CHECK(!memcmp(&g, &want_g, sizeof g), "vector pos %s: the gear (line %d)", name, line);
+        int geared = (p.flags & COOP_POS_GEAR) != 0;
+        if (geared) CHECK(coop_gear_sig(&g) == p.gear_sig, "vector pos %s: the gear's signature (line %d)", name, line);
+        size_t k = coop_pos_pack_gear(c, sizeof c, &p, geared ? &g : NULL);
         CHECK(k == (size_t)pn && !memcmp(c, a, k), "vector pos %s: packs to the same bytes (line %d)", name, line);
     } else if (!strcmp(kind, "reject")) {
         char *what = name, *nm = next_token(&rest), *bytes = next_token(&rest);
@@ -500,8 +523,12 @@ static void probe_fuzz(void) {
     n = coop_kick_pack(payload, sizeof payload, 2, 6);
     h.type = COOP_T_KICK, seed_len[6] = coop_dgram_pack(seeds[6], sizeof seeds[6], &h, payload, n, key);
     CoopPos pos = {.pseq = 7, .t_ms = 1000, .flags = COOP_POS_IN_WORLD, .area = "HyruleField", .pos = {1, 2, 3}, .nslots = 2,
-                   .slot = {{"Walk", 12}, {"Lower_Walk", 3.5f}}};
-    n = coop_pos_pack(payload, sizeof payload, &pos);   // a POS as the payload, so that changed copies reach its parser
+                   .slot = {{"Walk", 12}, {"Lower_Walk", 3.5f}}, .colour = COOP_COLOUR_RED, .want = COOP_COLOUR_NONE,
+                   .place = 2, .upper = 6};
+    CoopGear gear = {.dyn = {[0] = "Sword", [1] = "Shield"}, .state = {[0] = 2, [1] = 1}, .stat = {[1] = "Tunic", [12] = "Sheath"}};
+    pos.gear_sig = coop_gear_sig(&gear);
+    n = coop_pos_pack_gear(payload, sizeof payload, &pos, &gear);   // a POS with gear as the payload, so that changed
+                                                                     // copies reach its parser
     h.type = COOP_T_DATA, seed_len[7] = coop_dgram_pack(seeds[7], sizeof seeds[7], &h, payload, n, key);
     long parsed = 0, tag_ok = 0, open_ok = 0;
     for (int it = 0; it < 400000; it++) {
@@ -543,8 +570,10 @@ static void probe_fuzz(void) {
         coop_u32_parse(p, hh.len, &v);
         coop_envelope_peek(p, hh.len, &s64, &v);
         CoopPos pp;   // a POS that parses packs to the same bytes: nothing in it is dropped or changed on the way in
-        if (coop_pos_parse(p, hh.len, &pp))
-            CHECK(coop_pos_pack(out, sizeof out, &pp) == hh.len && !memcmp(out, p, hh.len), "a POS that parses packs to other bytes");
+        CoopGear pg;
+        if (coop_pos_parse_gear(p, hh.len, &pp, &pg))
+            CHECK(coop_pos_pack_gear(out, sizeof out, &pp, pp.flags & COOP_POS_GEAR ? &pg : NULL) == hh.len && !memcmp(out, p, hh.len),
+                  "a POS that parses packs to other bytes");
         open_ok += coop_open(p, hh.len, mk, hh.src, hh.dst, &kind, opened, sizeof opened, &no);
         coop_name_clean(nameb, sizeof nameb, p, hh.len);
         char text[40];

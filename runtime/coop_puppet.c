@@ -29,9 +29,12 @@
 // Arms: the puppet's arms no longer stay in the bind pose (A-pose): its AS slot 1 (Upper) plays
 // Link's slot-0 node at slot 0's frame while Link's own slot 1 is empty (NX2NAVI_COOP_PUPPET_ARMS, default upper;
 // they hang and swing as Link's). Gear: the shadow puppet is
-// dressed as Link is, through the game's own EquipmentUser calls (puppet_dress, NX2NAVI_COOP_PUPPET_GEAR). Colours
-// (in testing): each Link's tunic and cap glow faintly in his player's colour over the darkened fabric, the
+// dressed as Link is, through the game's own EquipmentUser calls (puppet_dress, NX2NAVI_COOP_PUPPET_GEAR). Colours:
+// each Link's tunic and cap glow faintly in his player's colour over the darkened fabric, the
 // local Link's own included (section "colours", NX2NAVI_COOP_COLOUR_SELF / _TEST; off until a colour is set).
+// Remote players: POS v3 carries each player's gear, colour, pick, join place
+// and empty upper slots, so that the other players' puppets get gear, colours and arms as the shadow test's does; the
+// room gives every member its own colour (section "room colours": NX2NAVI_COOP_COLOUR picks, NX2NAVI_COOP_COLOURS=0 off).
 // NX2NAVI_COOP_PUPPET_TEST=spike|shadow are the one-game tests.
 #include <math.h>
 #include <stdio.h>
@@ -1310,34 +1313,67 @@ static void shadow(Cpu *c, uint64_t player) {
 // message again (coop.h), and an old pose must not move a puppet back while the player's own keep arriving. After 3 s
 // with none taken, the next is taken whatever its counter, so a relay that held a player's datagrams back that long can
 // replay the player's recorded poses: the puppet walks an old path, and nothing else (progress, saves) follows from it.
+//
+// POS v3: a POS also carries the sender's gear (when it changes, three POS in
+// a row, and every 2 s), its colour, the colour it picked and its place in the room's join order (section "room
+// colours"), and which of its AS slots 1..3 play nothing (the arms: a puppet's slot there plays slot 0's node, as in
+// the shadow test). A remote puppet is dressed in its player's gear (puppet_dress) and tinted in its player's colour.
+// NX2NAVI_COOP_POS_GEAR=0 sends no gear (the puppets then wear nothing); NX2NAVI_COOP_PUPPET_GEAR=0 dresses none.
 
 #define HIST 8
 #define SILENT_MS 3000
 #define BEHIND_MS 100
+#define GEAR_EVERY_MS 2000    // the gear goes again this often while it stays the same
+#define GEAR_REPEAT 3         // POS in a row that carry a changed gear
 typedef struct {
     CoopPos pose[HIST];     // the latest poses by pseq, newest at head
     uint64_t recv_ms[HIST];
     int n, head;
     int32_t offset;         // our clock minus the sender's, the smallest seen (rising 1 ms a message so it follows)
     CoopPosSeen seen;       // the sender's counter, per session
+    CoopGear gear;          // POS v3: the sender's gear, from the last POS that carried it
+    uint32_t gear_sig;      // its signature (0: none yet)
+    uint64_t gear_session;  // the session it came in
+    uint32_t got, got_gear; // poses taken, and those with gear (for the log)
 } Remote;
 
 static struct {
-    PlatMutex lock;         // around r and session
+    PlatMutex lock;         // around r, session and the view's copy below
     Remote r[COOP_MAX_MEMBERS + 1];
     uint64_t session[COOP_MAX_MEMBERS + 1];   // each member's session, as the view lists it
+    char name[COOP_MAX_MEMBERS + 1][COOP_NAME_MAX + 1];   // and its name
+    int in_view[COOP_MAX_MEMBERS + 1];        // listed by the view now
     _Atomic int others;     // other members of the room this session is in (the view hook)
     _Atomic int self;
+    _Atomic int in_room;    // joined (or reconnecting to) a room
     _Atomic int alive;      // puppets the game thread holds
+    _Atomic unsigned epoch; // one more at every new room or leave: the join place starts again
+    uint64_t epoch_ms;      // when the current room was first seen
+    char room[COOP_SECRET_TEXT + 1];
     // the game thread's
     Puppet puppet[COOP_MAX_MEMBERS + 1];
     uint32_t pseq;
+    uint32_t sent, sent_gear;
+    uint32_t sent_sig;      // the gear signature sent last
+    int gear_left;          // POS still to carry a changed gear
+    uint64_t gear_at;       // when gear went last
+    uint32_t logged_sig[COOP_MAX_MEMBERS + 1];   // the remote gear last logged, per member
+    uint8_t logged_upper[COOP_MAX_MEMBERS + 1];
+    int pos_gear;           // NX2NAVI_COOP_POS_GEAR (default 1)
 } N;
+
+// room colours (below): this player's place, pick and colour for the POS it sends, and the assignment every frame
+static void room_colours(const Remote *r, const uint64_t *session, const int *in_view, char (*names)[COOP_NAME_MAX + 1],
+                         uint64_t now);
+static uint8_t room_colour_byte(void);
+static uint8_t room_want_byte(void);
+static uint16_t room_place(void);
 
 static void on_pos(int from, const uint8_t *bytes, size_t n, void *user) {
     (void)user;
     CoopPos p;
-    if (from < 1 || from > COOP_MAX_MEMBERS || !coop_pos_parse(bytes, n, &p)) return;
+    CoopGear g;
+    if (from < 1 || from > COOP_MAX_MEMBERS || !coop_pos_parse_gear(bytes, n, &p, &g)) return;
     uint64_t now = plat_now_ms();
     plat_mutex_lock(&N.lock);
     Remote *r = &N.r[from];
@@ -1349,20 +1385,38 @@ static void on_pos(int from, const uint8_t *bytes, size_t n, void *user) {
         r->head = (r->head + 1) % HIST;
         r->pose[r->head] = p, r->recv_ms[r->head] = now;
         if (r->n < HIST) r->n++;
+        r->got++;
+        if (p.flags & COOP_POS_GEAR) {
+            r->gear = g, r->gear_sig = coop_gear_sig(&g), r->gear_session = N.session[from];
+            r->got_gear++;
+        }
     }
     plat_mutex_unlock(&N.lock);
 }
 
 static void on_view(const CoopView *v, void *user) {
     (void)user;
+    int in_room = v->state == COOP_JOINED || v->state == COOP_RECONNECTING;
     int others = v->state == COOP_JOINED && v->n > 1 ? v->n - 1 : 0;
     N.others = others;
     N.self = v->self;
     plat_mutex_lock(&N.lock);
     if (!others) memset(N.r, 0, sizeof N.r);   // a new room starts from nothing
     memset(N.session, 0, sizeof N.session);
-    for (int i = 0; i < v->n; i++)
-        if (v->member[i].id >= 1 && v->member[i].id <= COOP_MAX_MEMBERS) N.session[v->member[i].id] = v->member[i].session;
+    memset(N.in_view, 0, sizeof N.in_view);
+    for (int i = 0; i < v->n; i++) {
+        int id = v->member[i].id;
+        if (id < 1 || id > COOP_MAX_MEMBERS) continue;
+        N.session[id] = v->member[i].session, N.in_view[id] = 1;
+        snprintf(N.name[id], sizeof N.name[id], "%s", v->member[i].name);
+    }
+    if (v->self >= 1 && v->self <= COOP_MAX_MEMBERS) snprintf(N.name[v->self], sizeof N.name[v->self], "%s", v->name);
+    if (!in_room ? N.in_room : strcmp(N.room, v->code) != 0) {   // a new room, or out of one: the place starts again
+        snprintf(N.room, sizeof N.room, "%s", in_room ? v->code : "");
+        N.epoch_ms = plat_now_ms();
+        N.epoch++;
+    }
+    N.in_room = in_room;
     plat_mutex_unlock(&N.lock);
 }
 
@@ -1401,10 +1455,43 @@ static void yaw_rot(float yaw, float rot[9]) {
     memcpy(rot, m, sizeof m);
 }
 
+// The puppet's Gear (gear section) from a POS's gear block, and back.
+static void gear_from_pos(const CoopGear *g, Gear *out) {
+    memset(out, 0, sizeof *out);
+    for (int j = 0; j < COOP_POS_GEAR_DYN && j < GEAR_DYN; j++) {
+        snprintf(out->dyn[j], sizeof out->dyn[j], "%s", g->dyn[j]);
+        out->state[j] = g->state[j];
+    }
+    for (int s = 0; s < COOP_POS_GEAR_STAT && s < GEAR_STAT; s++) snprintf(out->stat[s], sizeof out->stat[s], "%s", g->stat[s]);
+}
+
+static void gear_to_pos(const Gear *g, CoopGear *out) {
+    memset(out, 0, sizeof *out);
+    for (int j = 0; j < COOP_POS_GEAR_DYN && j < GEAR_DYN; j++) {
+        if (!g->dyn[j][0] || !gear_name_ok(g->dyn[j])) continue;   // only the game's equipment actors go out
+        snprintf(out->dyn[j], sizeof out->dyn[j], "%s", g->dyn[j]);
+        out->state[j] = g->state[j] <= 2 ? g->state[j] : 0;
+    }
+    for (int s = 0; s < COOP_POS_GEAR_STAT && s < GEAR_STAT; s++)
+        if (g->stat[s][0] && gear_name_ok(g->stat[s])) snprintf(out->stat[s], sizeof out->stat[s], "%s", g->stat[s]);
+}
+
+static void gear_log_line(const char *who, const char *what, const CoopGear *g, uint32_t sig) {
+    char line[900];
+    int o = snprintf(line, sizeof line, "coop: pos: w=%.2f %s %s (sig %08x):", wsec(), who, what, sig);
+    for (int j = 0; j < COOP_POS_GEAR_DYN && o < (int)sizeof line - 64; j++)
+        if (g->dyn[j][0]) o += snprintf(line + o, sizeof line - o, " j%d '%s' %u", j, g->dyn[j], g->state[j]);
+    for (int s = 0; s < COOP_POS_GEAR_STAT && o < (int)sizeof line - 64; s++)
+        if (g->stat[s][0]) o += snprintf(line + o, sizeof line - o, " s%d '%s'", s, g->stat[s]);
+    rt_log("%s", line);
+}
+
 static void send_pose(Cpu *c, uint64_t player, const char *area) {
     CoopPos me;
     memset(&me, 0, sizeof me);
     me.pseq = ++N.pseq, me.t_ms = (uint32_t)plat_now_ms();
+    CoopGear cg;
+    int with_gear = 0;
     if (player) {
         Pose p;
         pose_of(c, player, &p);
@@ -1416,11 +1503,39 @@ static void send_pose(Cpu *c, uint64_t player, const char *area) {
         for (int i = 0; i < p.nslots; i++) {
             snprintf(me.slot[i].node, sizeof me.slot[i].node, "%s", p.node[i]);
             me.slot[i].frame = p.frame[i];
+            if (i >= 1 && i <= 3 && !p.node[i][0]) me.upper |= (uint8_t)(1u << (i - 1));
+        }
+        if (N.pos_gear) {
+            Gear g;
+            gear_read(c, player, &g);
+            if (!P.test && gear_test[0]) {   // test: other gear than Link's goes out (NX2NAVI_COOP_PUPPET_GEAR_TEST)
+                static int said;
+                if (!said++) rt_log("coop: pos: the gear sent is changed by NX2NAVI_COOP_PUPPET_GEAR_TEST='%s'", gear_test);
+                gear_test_apply(&g);
+            }
+            gear_to_pos(&g, &cg);
+            me.gear_sig = coop_gear_sig(&cg);
+            uint64_t now = plat_now_ms();
+            if (me.gear_sig != N.sent_sig) {
+                gear_log_line("Link", N.sent_sig ? "wears other gear: sent" : "gear sent", &cg, me.gear_sig);
+                N.sent_sig = me.gear_sig, N.gear_left = GEAR_REPEAT;
+            }
+            if (N.gear_left > 0 || now - N.gear_at >= GEAR_EVERY_MS) {
+                with_gear = 1, N.gear_at = now;
+                if (N.gear_left > 0) N.gear_left--;
+            }
         }
     }
+    me.colour = room_colour_byte(), me.want = room_want_byte(), me.place = room_place();
     uint8_t buf[COOP_MAX_PAYLOAD];
-    size_t n = coop_pos_pack(buf, sizeof buf, &me);
-    if (n) coop_send(COOP_K_POS, buf, n);
+    size_t n = coop_pos_pack_gear(buf, sizeof buf, &me, with_gear ? &cg : NULL);
+    if (!n && with_gear) {   // names too long for one datagram: the pose without them
+        static int said;
+        if (!said++) rt_log("coop: pos: the gear does not fit a POS; sent without it");
+        with_gear = 0;
+        n = coop_pos_pack_gear(buf, sizeof buf, &me, NULL);
+    }
+    if (n && coop_send(COOP_K_POS, buf, n)) N.sent++, N.sent_gear += with_gear;
 }
 
 static void remotes(Cpu *c, uint64_t player, const char *area) {
@@ -1429,12 +1544,31 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
     uint64_t pose_now = plat_now_ms();
     if (others && pose_now - pose_at >= 66) pose_at = pose_now, send_pose(c, player, area);   // 15 a second
     static Remote r[COOP_MAX_MEMBERS + 1];
+    static uint64_t session[COOP_MAX_MEMBERS + 1];
+    static int in_view[COOP_MAX_MEMBERS + 1];
+    static char names[COOP_MAX_MEMBERS + 1][COOP_NAME_MAX + 1];
     plat_mutex_lock(&N.lock);
     memcpy(r, N.r, sizeof r);
+    memcpy(session, N.session, sizeof session);
+    memcpy(in_view, N.in_view, sizeof in_view);
+    memcpy(names, N.name, sizeof names);
     plat_mutex_unlock(&N.lock);
     uint64_t now = plat_now_ms();
+    room_colours(r, session, in_view, names, now);
     int alive = 0;
     uint32_t shown = coop_game_shown();   // members accepted and identified (coop_offer_shown)
+    static uint64_t stats_at;
+    if (others && now - stats_at >= 10000) {
+        stats_at = now;
+        char line[400];
+        int o = snprintf(line, sizeof line, "coop: pos: w=%.2f sent %u (%u with gear);", wsec(), N.sent, N.sent_gear);
+        for (int id = 1; id <= COOP_MAX_MEMBERS && o < (int)sizeof line - 80; id++)
+            if (id != self && in_view[id])
+                o += snprintf(line + o, sizeof line - o, " member %d '%s': %u taken (%u with gear)%s%s", id, names[id],
+                              r[id].got, r[id].got_gear, shown >> id & 1 ? "" : ", not shown (not accepted or identified)",
+                              r[id].n ? "" : ", none yet");
+        rt_log("%s", line);
+    }
     for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
         Puppet *p = &N.puppet[id];
         CoopPos pose = {0};
@@ -1460,14 +1594,37 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
             float rot[9];
             yaw_rot(pose.yaw, rot);
             Pose anim = {.nslots = pose.nslots};
+            const CoopPos *newest = &r[id].pose[r[id].head];
             for (int i = 0; i < pose.nslots && i < SLOTS; i++) {
                 snprintf(anim.node[i], sizeof anim.node[i], "%s", pose.slot[i].node);
                 anim.frame[i] = pose.slot[i].frame;
+                // POS v3: the sender's slots 1..3 that play nothing stay empty here, so that puppet_pose has the
+                // puppet's slot there play slot 0's node (the arms), whatever an older pose between them said
+                if (i >= 1 && i <= 3 && newest->upper >> (i - 1) & 1) anim.node[i][0] = 0;
             }
-            puppet_pose(c, p, pose.pos, rot, &anim, P.frames % 600 < 4);
-            if ((P.frames - p->asked_frame) % 300 == 0)
+            if (newest->upper != N.logged_upper[id]) {
+                N.logged_upper[id] = newest->upper;
+                rt_log("coop: pos: w=%.2f member %d's upper slots: %s%s%s (slot 1 '%s')", wsec(), id,
+                       newest->upper & 1 ? "1 empty" : "1 plays", newest->upper & 2 ? ", 2 empty" : ", 2 plays",
+                       newest->upper & 4 ? ", 3 empty" : ", 3 plays", newest->slot[1].node);
+            }
+            char who[24];
+            snprintf(who, sizeof who, "member %d", id);
+            puppet_pose(c, p, pose.pos, rot, &anim, 1);
+            if (r[id].gear_sig && r[id].gear_session == session[id]) {
+                if (r[id].gear_sig != N.logged_sig[id]) {
+                    N.logged_sig[id] = r[id].gear_sig;
+                    gear_log_line(who, "gear received", &r[id].gear, r[id].gear_sig);
+                }
+                Gear g;
+                gear_from_pos(&r[id].gear, &g);
+                puppet_dress(c, p->actor, &g, who);
+            }
+            if ((P.frames - p->asked_frame) % 300 == 0) {
                 rt_log("coop: puppet: member %d's puppet at %.2f %.2f %.2f, slot 0 '%s' %.1f", id, pose.pos[0],
                        pose.pos[1], pose.pos[2], anim.node[0], anim.frame[0]);
+                log_slots(who, p->actor);
+            }
         }
         alive += p->state == SP_ASKED || p->state == SP_FOLLOW;
     }
@@ -1568,14 +1725,16 @@ static const char *const prm_name[PR_N] = {"p_model_blend_color", "p_death_petri
                                            "p_warp_emission_intensity"};
 
 static struct {
-    int self, test;                      // colours: the local Link, the shadow puppet
-    int member[COOP_MAX_MEMBERS + 1];    // a member's puppet: the room's assignment (none yet)
+    _Atomic int self;                    // colours: the local Link (the room's assignment in a room, else self_env)
+    int test;                            // the shadow puppet
+    int self_env;                        // NX2NAVI_COOP_COLOUR_SELF (test: the local Link outside a room)
+    int member[COOP_MAX_MEMBERS + 1];    // a member's puppet: the room's assignment (section "room colours")
     int param, native, diag;   // diag: test, NX2NAVI_COOP_COLOUR_DIAG=1 logs the parameters' values
     float strength, dark;
     _Atomic int dirty;                   // units still carry a colour (the hook stays on to take it away)
     uint32_t frames, writes, skips, yields;
-} CL = {.self = COL_NONE, .test = COL_NONE, .member = {[0 ... COOP_MAX_MEMBERS] = COL_NONE}, .param = CP_WARP,
-        .strength = 0.03f, .dark = 0.8f};
+} CL = {.self = COL_NONE, .test = COL_NONE, .self_env = COL_NONE, .member = {[0 ... COOP_MAX_MEMBERS] = COL_NONE},
+        .param = CP_WARP, .strength = 0.03f, .dark = 0.8f};
 
 // A model unit looked at: its tunic materials and their parameters, and what it carries now.
 typedef struct {
@@ -2004,7 +2163,8 @@ static void colour_frame(Cpu *c, uint64_t player) {
 }
 
 static void colour_cfg(void) {
-    CL.self = col_parse(cfg_get("NX2NAVI_COOP_COLOUR_SELF"), "NX2NAVI_COOP_COLOUR_SELF");
+    CL.self_env = col_parse(cfg_get("NX2NAVI_COOP_COLOUR_SELF"), "NX2NAVI_COOP_COLOUR_SELF");
+    CL.self = CL.self_env;   // in a room, the room's assignment replaces it (room_colours)
     CL.test = col_parse(cfg_get("NX2NAVI_COOP_COLOUR_TEST"), "NX2NAVI_COOP_COLOUR_TEST");
     for (int id = 0; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = COL_NONE;   // the room's assignment: not yet
     const char *pm = cfg_get("NX2NAVI_COOP_COLOUR_PARAM");
@@ -2024,7 +2184,7 @@ static void colour_cfg(void) {
     CL.native = nt && *nt && strcmp(nt, "0") != 0;
     col_rgb_parse(cfg_get("NX2NAVI_COOP_COLOUR_RGB"));
     if (CL.self == COL_NONE && CL.test == COL_NONE)
-        rt_log("coop: colour: off (no NX2NAVI_COOP_COLOUR_SELF or _TEST)");
+        rt_log("coop: colour: no test colours (NX2NAVI_COOP_COLOUR_SELF, _TEST); in a room the room's colours apply");
     else
         rt_log("coop: colour: Link %s, shadow %s, %s, strength %.3f, dark %.2f, native tunics %s; green %.2f %.2f %.2f, red %.2f "
                "%.2f %.2f, blue %.2f %.2f %.2f, purple %.2f %.2f %.2f",
@@ -2032,6 +2192,126 @@ static void colour_cfg(void) {
                cp_name[CL.param], CL.strength, CL.dark, CL.native ? "tinted" : "kept", col_rgb[0][0], col_rgb[0][1],
                col_rgb[0][2], col_rgb[1][0], col_rgb[1][1], col_rgb[1][2], col_rgb[2][0], col_rgb[2][1], col_rgb[2][2],
                col_rgb[3][0], col_rgb[3][1], col_rgb[3][2]);
+}
+
+// ---- room colours: every member of a room has a colour of its own (green,
+// red, blue, purple), and every game shows the same. Each member's POS carries its place in the room's join order (one
+// more than the highest place it heard from the members already in the room when it joined; it waits up to 1.5 s to
+// hear them all), the colour it picked (NX2NAVI_COOP_COLOUR=green|red|blue|purple; unset or auto: none) and the colour
+// it shows now. Every game runs the same assignment over the members it hears, in join order (place, then member id
+// for two that joined at the same moment; a member whose place is not known yet comes last): a member gets the colour
+// it picked if no earlier member has it, else the colour it shows now if no earlier member has that (a colour once
+// given stays), else the first free one in the order green, red, blue, purple. So of two members that want one
+// colour the earlier joiner keeps it, and a member that picked none gets the first free colour in join order. The
+// local Link and each member's puppet show the result (colour_frame). A member that sends no POS (puppets off) takes
+// part in nothing. NX2NAVI_COOP_COLOURS=0 turns room colours off; they are on with NX2NAVI_COOP_PUPPETS, since the
+// POS that carries them goes only then. Outside a room the test colour NX2NAVI_COOP_COLOUR_SELF applies again.
+
+#define PLACE_WAIT_MS 1500
+static struct {
+    int on;                 // NX2NAVI_COOP_COLOURS (default: with NX2NAVI_COOP_PUPPETS)
+    int want;               // NX2NAVI_COOP_COLOUR: COL_NONE (none picked) or a colour
+    // the game thread's
+    unsigned epoch;         // the N.epoch this place belongs to
+    int place;              // this player's place in the room's join order, 0 until known
+    _Atomic int colour;     // this player's colour now (what its POS says it shows)
+    int shown[COOP_MAX_MEMBERS + 1];   // the assignment logged last
+} RC = {.want = COL_NONE, .colour = COL_NONE, .shown = {[0 ... COOP_MAX_MEMBERS] = COL_NONE}};
+
+static uint8_t room_colour_byte(void) {
+    int c = RC.colour;
+    return c >= 0 && c < COL_N ? (uint8_t)c : COOP_COLOUR_NONE;
+}
+static uint8_t room_want_byte(void) { return RC.on && RC.want >= 0 && RC.want < COL_N ? (uint8_t)RC.want : COOP_COLOUR_NONE; }
+static uint16_t room_place(void) { return RC.on ? (uint16_t)RC.place : 0; }
+
+enum { WHY_PICKED, WHY_KEPT, WHY_FIRST_FREE, WHY_NONE_FREE };
+static const char *const why_text[] = {"picked", "kept", "first free", "none free"};
+
+typedef struct { int id, place, want, colour; } RoomMember;
+
+// The assignment, the same in every game for the same members: m is sorted into join order, out[id] and why[id] set.
+static void room_assign(RoomMember *m, int n, int *out, int *why) {
+    for (int i = 1; i < n; i++)
+        for (int k = i; k > 0; k--) {
+            unsigned ka = (m[k - 1].place ? (unsigned)m[k - 1].place : 0x10000u) * 16u + (unsigned)m[k - 1].id;
+            unsigned kb = (m[k].place ? (unsigned)m[k].place : 0x10000u) * 16u + (unsigned)m[k].id;
+            if (ka <= kb) break;
+            RoomMember t = m[k];
+            m[k] = m[k - 1], m[k - 1] = t;
+        }
+    int taken[COL_N] = {0};
+    for (int i = 0; i < n; i++) {
+        int c = COL_NONE, w = WHY_NONE_FREE;
+        if (m[i].want >= 0 && m[i].want < COL_N && !taken[m[i].want]) c = m[i].want, w = WHY_PICKED;
+        else if (m[i].colour >= 0 && m[i].colour < COL_N && !taken[m[i].colour]) c = m[i].colour, w = WHY_KEPT;
+        else
+            for (int k = 0; k < COL_N && c == COL_NONE; k++)
+                if (!taken[k]) c = k, w = WHY_FIRST_FREE;
+        if (c != COL_NONE) taken[c] = 1;
+        out[m[i].id] = c, why[m[i].id] = w;
+    }
+}
+
+static void room_colours(const Remote *r, const uint64_t *session, const int *in_view, char (*names)[COOP_NAME_MAX + 1],
+                         uint64_t now) {
+    int self = N.self;
+    unsigned epoch = N.epoch;
+    if (epoch != RC.epoch) {   // a new room, or none: the place is found again and the colours given again
+        RC.epoch = epoch, RC.place = 0, RC.colour = COL_NONE;
+        for (int id = 0; id <= COOP_MAX_MEMBERS; id++) RC.shown[id] = COL_NONE;
+    }
+    if (!RC.on || !N.in_room || self < 1 || self > COOP_MAX_MEMBERS) {
+        if (RC.colour != COL_NONE || CL.self != CL.self_env) rt_log("coop: colour: w=%.2f out of the room's colours", wsec());
+        CL.self = CL.self_env, RC.colour = COL_NONE;
+        for (int id = 0; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = COL_NONE;
+        return;
+    }
+    // the other members the view lists whose POS came in their current session
+    int heard[COOP_MAX_MEMBERS + 1] = {0}, all = 1, top = 0;
+    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
+        if (id == self || !in_view[id]) continue;
+        heard[id] = r[id].n > 0 && r[id].seen.session == session[id];
+        if (!heard[id]) {
+            all = 0;
+            continue;
+        }
+        int pl = r[id].pose[r[id].head].place;
+        if (pl > top) top = pl;
+    }
+    if (!RC.place && (all || now - N.epoch_ms > PLACE_WAIT_MS)) {
+        RC.place = top < 65535 ? top + 1 : 65535;
+        rt_log("coop: colour: w=%.2f this player (member %d '%s') is number %d in the room's join order (%s)", wsec(),
+               self, names[self], RC.place, all ? "heard every other member" : "1.5 s without hearing every other member");
+    }
+    RoomMember m[COOP_MAX_MEMBERS + 1];
+    int n = 0;
+    m[n++] = (RoomMember){self, RC.place, RC.want, RC.colour};
+    for (int id = 1; id <= COOP_MAX_MEMBERS; id++)
+        if (heard[id]) {
+            const CoopPos *p = &r[id].pose[r[id].head];
+            m[n++] = (RoomMember){id, p->place, p->want < COL_N ? p->want : COL_NONE, p->colour < COL_N ? p->colour : COL_NONE};
+        }
+    int out[COOP_MAX_MEMBERS + 1], why[COOP_MAX_MEMBERS + 1];
+    for (int id = 0; id <= COOP_MAX_MEMBERS; id++) out[id] = COL_NONE, why[id] = WHY_NONE_FREE;
+    room_assign(m, n, out, why);
+    int changed = 0;
+    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) changed |= out[id] != RC.shown[id];
+    if (changed) {
+        char line[900];
+        int o = snprintf(line, sizeof line, "coop: colour: w=%.2f room colours in join order:", wsec());
+        for (int i = 0; i < n && o < (int)sizeof line - 160; i++) {
+            int id = m[i].id, w = m[i].want;
+            o += snprintf(line + o, sizeof line - o, "%s member %d '%s'%s place %d: %s (%s%s%s)", i ? ";" : "", id,
+                          names[id], id == self ? " (this player)" : "", m[i].place, out[id] >= 0 ? col_name[out[id]] : "none",
+                          why_text[why[id]], w >= 0 && out[id] != w ? "; it picked " : "", w >= 0 && out[id] != w ? col_name[w] : "");
+        }
+        rt_log("%s", line);
+        for (int id = 0; id <= COOP_MAX_MEMBERS; id++) RC.shown[id] = out[id];
+    }
+    RC.colour = out[self];
+    CL.self = out[self];
+    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) CL.member[id] = id == self ? COL_NONE : out[id];
 }
 
 // ---- the hook
@@ -2060,7 +2340,9 @@ static void puppet_frame(Cpu *c) {
         if (P.test == 1) spike(c, player);
         if (P.test == 2) shadow(c, player);
     }
-    if ((P.remote && N.others) || N.alive) remotes(c, player, area);
+    // the other players (and, in a room, the room's colours: the local Link's too, even alone in it); once more after
+    // leaving a room, to take its colours away
+    if ((P.remote && (N.others || N.in_room)) || N.alive || RC.colour != COL_NONE) remotes(c, player, area);
     colour_frame(c, player);
 }
 
@@ -2091,6 +2373,18 @@ void coop_puppet_present(void) {
         rt_log("coop: puppet: gear %d (drawn %d, mask %#x%s%s), blackboard copy %d", gear_mode, gear_drawn, gear_mask,
                gear_test[0] ? ", test gear " : "", gear_test, P.bb_copy);
         colour_cfg();
+        // room colours, this player's pick, and the gear in POS v3
+        const char *rcv = cfg_get("NX2NAVI_COOP_COLOURS");   // on with the puppets unless "0"
+        RC.on = P.remote && !(rcv && !strcmp(rcv, "0"));
+        const char *pick = cfg_get("NX2NAVI_COOP_COLOUR");   // green, red, blue, purple; unset or auto: the first free
+        RC.want = pick && *pick && strcmp(pick, "auto") ? col_parse(pick, "NX2NAVI_COOP_COLOUR") : COL_NONE;
+        const char *pg = cfg_get("NX2NAVI_COOP_POS_GEAR");   // the gear in POS: on unless "0"
+        N.pos_gear = !(pg && !strcmp(pg, "0"));
+        if (P.remote)
+            rt_log("coop: colour: room colours %s (NX2NAVI_COOP_COLOURS='%s'); this player picks %s (NX2NAVI_COOP_COLOUR='%s'); "
+                   "POS version %d, gear in it %s (NX2NAVI_COOP_POS_GEAR='%s')", RC.on ? "on" : "off", rcv ? rcv : "",
+                   RC.want != COL_NONE ? col_name[RC.want] : "none (the first free colour)", pick ? pick : "",
+                   COOP_POS_VERSION, N.pos_gear ? "on" : "off", pg ? pg : "");
         if (P.test == 1 && t[5] == ':') {
             char a[64] = "", b[64] = "";
             if (sscanf(t + 6, "%63[^:]:%63s", a, b) >= 1 && a[0]) snprintf(spike_names[0], sizeof spike_names[0], "%s", a);
@@ -2105,8 +2399,10 @@ void coop_puppet_present(void) {
         }
     }
     // on while there are others in the room to show (NX2NAVI_COOP_PUPPETS) or puppets to remove, or the local Link
-    // has a colour (or still carries one); off (the original call) otherwise
-    int want = P.test != 0 || (P.remote && N.others) || N.alive || CL.self != COL_NONE || CL.dirty;
+    // has a colour (or still carries one), or this player is in a room with room colours; off (the original call)
+    // otherwise
+    int want = P.test != 0 || (P.remote && N.others) || N.alive || CL.self != COL_NONE || CL.dirty ||
+               (RC.on && N.in_room) || RC.colour != COL_NONE;
     if (want != P.want) {
         P.want = want;
         rt_patch_switch(P.set, want);
@@ -2116,6 +2412,7 @@ void coop_puppet_present(void) {
 
 void coop_puppet_init(void) {
     plat_mutex_init(&N.lock);
+    N.pos_gear = 1;
     if (P.set < 0) return;
     coop_on_message(COOP_K_POS, on_pos, NULL);
     coop_on_view(on_view, NULL);

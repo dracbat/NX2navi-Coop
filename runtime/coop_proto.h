@@ -164,8 +164,8 @@ int coop_sign_check(const uint8_t sig[COOP_SIG_LEN], const uint8_t pk[COOP_PK_LE
 // BLAKE2b of msg keyed with key (klen at most 64, 0 for none), outlen bytes (1 to 64): the sync layer's derivations.
 void coop_blake2b(uint8_t *out, size_t outlen, const void *key, size_t klen, const void *msg, size_t n);
 
-// ---- POS (COOP_K_POS): where a player is and what Link plays, for showing the other players (nothing sends it in this build), meant to be sent about 15
-// times a second as a sealed player message (above). The bytes after the kind, little endian: u8 version
+// ---- POS (COOP_K_POS): where a player is and what Link plays, for showing the other players (coop_puppet.c sends it
+// about 15 times a second as a sealed player message, above). The bytes after the kind, little endian: u8 version
 // (COOP_POS_VERSION), u32 pseq (the sender's counter: one more for each POS it sends), u32 t_ms (the sender's clock), u8
 // flags, u8 area length (<= COOP_POS_TEXT) and the area's name (the game's current-area text), f32 x y z, f32 yaw
 // (radians, 0 facing +z), u8 slot count (<= COOP_POS_SLOTS), per AS slot u8 node name length (<= COOP_POS_TEXT), the
@@ -173,10 +173,24 @@ void coop_blake2b(uint8_t *out, size_t outlen, const void *key, size_t klen, con
 // build cannot read (version 1 had a u16 pseq). The names come from another player's game and reach this one's log and
 // its animation lookup, so a name with a byte outside printable ASCII (0x20..0x7e) is refused, and so is a number that
 // is not finite.
-#define COOP_POS_VERSION 2
+//
+// Version 3 (the other players' puppets: gear, colours and arms as the one-game shadow test shows them)
+// follows the slots with: u8 colour (the colour the sender's own Link shows: COOP_COLOUR_*, 0xff none), u8 want (the
+// colour the sender picked, NX2NAVI_COOP_COLOUR; 0xff none: the first free one), u16 place (the sender's place in the
+// room's join order: one more than the highest place it heard when it joined; 0 not known yet), u8 upper (bit i-1:
+// the sender's AS slot i, 1..3, plays nothing, so a puppet's arms follow slot 0 there), u32 gear signature (a hash of
+// the sender's gear, in every POS), and, when flags has COOP_POS_GEAR, the gear: u8 hand mask (bits 0..6, the
+// EquipmentUser's dynamic slots j), u16 body mask (bits 0..12, its static slots s), per hand bit u8 state (0 stowed,
+// 1 drawn, 2 sheathed), u8 name length and the name, per body bit u8 name length and the name. The sender adds the
+// gear when it changes (three times in a row) and every 2 s, so a lost datagram is repaired soon. Gear names are
+// actor names of the sender's game: printable ASCII, and the receiver asks only for the game's equipment actors.
+#define COOP_POS_VERSION 3
 #define COOP_POS_TEXT 47
 #define COOP_POS_SLOTS 4
-enum { COOP_POS_ADULT = 1, COOP_POS_IN_WORLD = 2 };
+#define COOP_POS_GEAR_DYN 7
+#define COOP_POS_GEAR_STAT 13
+enum { COOP_POS_ADULT = 1, COOP_POS_IN_WORLD = 2, COOP_POS_GEAR = 4 };
+enum { COOP_COLOUR_GREEN, COOP_COLOUR_RED, COOP_COLOUR_BLUE, COOP_COLOUR_PURPLE, COOP_COLOURS, COOP_COLOUR_NONE = 0xff };
 typedef struct {
     uint32_t pseq;
     uint32_t t_ms;
@@ -184,9 +198,24 @@ typedef struct {
     char area[COOP_POS_TEXT + 1];
     float pos[3], yaw;
     struct { char node[COOP_POS_TEXT + 1]; float frame; } slot[COOP_POS_SLOTS];
+    uint8_t colour, want, upper;    // version 3
+    uint16_t place;
+    uint32_t gear_sig;
 } CoopPos;
+// What a POS's gear block carries (COOP_POS_GEAR): the names by slot ("" none) and the hand items' states.
+typedef struct {
+    char dyn[COOP_POS_GEAR_DYN][COOP_POS_TEXT + 1];
+    uint8_t state[COOP_POS_GEAR_DYN];
+    char stat[COOP_POS_GEAR_STAT][COOP_POS_TEXT + 1];
+} CoopGear;
 size_t coop_pos_pack(uint8_t *out, size_t cap, const CoopPos *p);   // 0 when it does not fit cap
 int coop_pos_parse(const uint8_t *p, size_t n, CoopPos *out);
+// As above with the gear block: gear NULL packs none (and clears COOP_POS_GEAR); a parse with gear NULL checks the
+// block but keeps nothing of it, else *gear is the block (all empty when the POS has none: see out->flags).
+size_t coop_pos_pack_gear(uint8_t *out, size_t cap, const CoopPos *p, const CoopGear *gear);
+int coop_pos_parse_gear(const uint8_t *p, size_t n, CoopPos *out, CoopGear *gear);
+// The gear signature a POS carries: FNV-1a over the names and states (0 never: 1 instead).
+uint32_t coop_gear_sig(const CoopGear *g);
 
 // The receiver's counter of one POS sender (coop.h: a handler is not called once only). A pose is taken only above the
 // last one taken from the same member id in the same session, so neither a pose sent again nor one recorded earlier

@@ -49,23 +49,63 @@ def unhex(s):
     return b'' if s == '-' else bytes.fromhex(s)
 
 
-# ---- POS (player message kind 2, sealed as every player message): where a player is and what Link plays, for the co-op
-# other players in the world (no sender in this build). The relay forwards it unread, so its codec is here and in runtime/coop_proto.c only.
-# Little endian: u8 version (2), u32 pseq (the sender's counter), u32 t_ms (the sender's clock), u8 flags (POS_ADULT,
-# POS_IN_WORLD), u8 area length (< 48) and the area's name, f32 x y z, f32 yaw (radians), u8 slot count (<= 4), per AS
-# slot u8 node name length (< 48), the name, f32 frame. Names are printable ASCII and numbers finite, else the message
-# is refused. Version 1 had a u16 pseq.
-POS_VERSION = 2
-POS_ADULT, POS_IN_WORLD = 1, 2
+# ---- POS (player message kind 2, sealed as every player message): where a player is and what Link plays, for showing
+# the other players of a co-op room (runtime/coop_puppet.c). The relay forwards it unread, so its codec is here and in
+# runtime/coop_proto.c only.
+# Little endian: u8 version (3), u32 pseq (the sender's counter), u32 t_ms (the sender's clock), u8 flags (POS_ADULT,
+# POS_IN_WORLD, POS_GEAR), u8 area length (< 48) and the area's name, f32 x y z, f32 yaw (radians), u8 slot count
+# (<= 4), per AS slot u8 node name length (< 48), the name, f32 frame; then u8 colour and u8 want (0..3, 0xff none),
+# u16 place, u8 upper, u32 gear signature; with POS_GEAR the gear: u8 hand mask (7 bits), u16 body mask (13 bits), per
+# hand bit u8 state (0..2), u8 name length (1..47) and the name, per body bit u8 name length (1..47) and the name.
+# Names are printable ASCII and numbers finite, else the message is refused. Version 1 had a u16 pseq, version 2 ended
+# after the slots.
+POS_VERSION = 3
+POS_ADULT, POS_IN_WORLD, POS_GEAR = 1, 2, 4
 POS_TEXT_MAX, POS_SLOTS = 47, 4
+POS_GEAR_DYN, POS_GEAR_STAT = 7, 13
+POS_COLOURS, POS_COLOUR_NONE = 4, 0xFF
 POS_HEAD = 11
+NO_GEAR = (((0, b''),) * POS_GEAR_DYN, (b'',) * POS_GEAR_STAT)
 
 
-def pack_pos(pseq, t_ms, flags, area, xyz, yaw, slots):
+def gear_sig(gear):
+    """runtime/coop_proto.c coop_gear_sig: FNV-1a over the hand items' names and states and the body items' names (0
+    never: 1). gear: ((state, name) per hand slot, name per body slot), b'' for an empty slot."""
+    h = 2166136261
+
+    def mix(v):
+        nonlocal h
+        h = ((h ^ v) * 16777619) & 0xFFFFFFFF
+    dyn, stat = gear
+    for state, name in dyn:
+        for ch in name:
+            mix(ch)
+        mix(0x100 + state if name else 0x55)
+    for name in stat:
+        for ch in name:
+            mix(ch)
+        mix(0x77)
+    return h or 1
+
+
+def pack_pos(pseq, t_ms, flags, area, xyz, yaw, slots, colour=POS_COLOUR_NONE, want=POS_COLOUR_NONE, place=0, upper=0,
+             sig=0, gear=None):
+    """gear None packs no gear block (and clears POS_GEAR); else (dyn, stat) as gear_sig takes it."""
+    flags = flags | POS_GEAR if gear is not None else flags & ~POS_GEAR
     out = struct.pack('<BIIBB', POS_VERSION, pseq, t_ms, flags, len(area)) + area + struct.pack('<4f', *xyz, yaw)
     out += bytes([len(slots)])
     for node, frame in slots:
         out += bytes([len(node)]) + node + struct.pack('<f', frame)
+    out += struct.pack('<BBHBI', colour, want, place, upper, sig)
+    if gear is not None:
+        dyn, stat = gear
+        out += struct.pack('<BH', sum(1 << j for j, (_, n) in enumerate(dyn) if n), sum(1 << s for s, n in enumerate(stat) if n))
+        for state, name in dyn:
+            if name:
+                out += bytes([state, len(name)]) + name
+        for name in stat:
+            if name:
+                out += bytes([len(name)]) + name
     return out
 
 
@@ -73,8 +113,16 @@ def _printable(b):
     return all(0x20 <= c <= 0x7e for c in b)
 
 
+def _gear_name(b, at):
+    """(name, the offset after it) of a gear block's name at b[at], or (None, at) unless it is 1..47 printable bytes."""
+    if at >= len(b) or not 0 < b[at] <= POS_TEXT_MAX or at + 1 + b[at] > len(b) or not _printable(b[at + 1:at + 1 + b[at]]):
+        return None, at
+    return b[at + 1:at + 1 + b[at]], at + 1 + b[at]
+
+
 def parse_pos(b):
-    """(pseq, t_ms, flags, area, (x, y, z), yaw, ((node, frame), ...)), or None unless b is exactly one POS of version 2."""
+    """(pseq, t_ms, flags, area, (x, y, z), yaw, ((node, frame), ...), colour, want, place, upper, sig, gear), gear None
+    without POS_GEAR; or None unless b is exactly one POS of version 3."""
     if len(b) < POS_HEAD or b[0] != POS_VERSION or b[10] > POS_TEXT_MAX or len(b) < POS_HEAD + b[10] + 17:
         return None
     pseq, t_ms, flags, alen = struct.unpack_from('<IIBB', b, 1)
@@ -93,14 +141,59 @@ def parse_pos(b):
             return None
         slots.append((node, frame))
         at += 1 + len(node) + 4
-    return (pseq, t_ms, flags, area, (x, y, z), yaw, tuple(slots)) if at == len(b) else None
+    if at + 9 > len(b):
+        return None
+    colour, want, place, upper, sig = struct.unpack_from('<BBHBI', b, at)
+    at += 9
+    if any(c >= POS_COLOURS and c != POS_COLOUR_NONE for c in (colour, want)):
+        return None
+    gear = None
+    if flags & POS_GEAR:
+        if at + 3 > len(b):
+            return None
+        dmask, smask = struct.unpack_from('<BH', b, at)
+        at += 3
+        if dmask >> POS_GEAR_DYN or smask >> POS_GEAR_STAT:
+            return None
+        dyn, stat = list(NO_GEAR[0]), list(NO_GEAR[1])
+        for j in range(POS_GEAR_DYN):
+            if dmask >> j & 1:
+                if at >= len(b) or b[at] > 2:
+                    return None
+                state = b[at]
+                name, at = _gear_name(b, at + 1)
+                if name is None:
+                    return None
+                dyn[j] = (state, name)
+        for s in range(POS_GEAR_STAT):
+            if smask >> s & 1:
+                stat[s], at = _gear_name(b, at)
+                if stat[s] is None:
+                    return None
+        gear = (tuple(dyn), tuple(stat))
+    if at != len(b):
+        return None
+    return (pseq, t_ms, flags, area, (x, y, z), yaw, tuple(slots), colour, want, place, upper, sig, gear)
 
 
 def pos_tokens(name, p):
-    """A pos vector line's tokens: name, the payload, then the fields (floats exact in f32, so repr reads back)."""
-    pseq, t_ms, flags, area, xyz, yaw, slots = parse_pos(p)
-    return ('pos', name, hx(p), pseq, t_ms, flags, hx(area), *[repr(v) for v in xyz], repr(yaw),
-            *[f'{hx(node)}:{frame!r}' for node, frame in slots])
+    """A pos vector line's tokens: name, the payload, then the fields (floats exact in f32, so repr reads back); the gear
+    as d<slot>=<state>:<name> and s<slot>=<name>."""
+    pseq, t_ms, flags, area, xyz, yaw, slots, colour, want, place, upper, sig, gear = parse_pos(p)
+    dyn, stat = gear or NO_GEAR
+    return ('pos', name, hx(p), pseq, t_ms, flags, hx(area), *[repr(v) for v in xyz], repr(yaw), colour, want, place, upper,
+            sig, *[f'{hx(node)}:{frame!r}' for node, frame in slots],
+            *[f'd{j}={state}:{hx(n)}' for j, (state, n) in enumerate(dyn) if n], *[f's{s}={hx(n)}' for s, n in enumerate(stat) if n])
+
+
+def pos_gear(dyn=(), stat=()):
+    """A gear block from {slot: (state, name)} and {slot: name} pairs."""
+    d, s = list(NO_GEAR[0]), list(NO_GEAR[1])
+    for j, v in dyn:
+        d[j] = v
+    for k, v in stat:
+        s[k] = v
+    return tuple(d), tuple(s)
 
 
 # ---- the byte vectors
@@ -122,8 +215,9 @@ def build_vectors():
            '# connect|challenge|roster|joined|error|kick ...             one message payload: parse, check the fields, pack again',
            '# sealed <name> <secret> <src> <dst> <session> <counter> <kind> <message> <payload>   opens to kind and message, seals',
            '#                                                            to the same bytes',
-           '# pos <name> <payload> <pseq> <t_ms> <flags> <area> <x> <y> <z> <yaw> <node:frame>...   a POS (the message after its',
-           '#                                                            kind byte): parse, check the fields, pack again',
+           '# pos <name> <payload> <pseq> <t_ms> <flags> <area> <x> <y> <z> <yaw> <colour> <want> <place> <upper> <gear sig>',
+           '#     <node:frame>... <d<slot>=<state>:<name>>... <s<slot>=<name>>...   a POS (the message after its kind byte):',
+           '#                                                            parse, check the fields and the gear, pack again',
            '# reject <kind> <name> <bytes>                               parse must fail']
 
     def line(*tokens):
@@ -198,6 +292,25 @@ def build_vectors():
     line(*pos_tokens('loading', pack_pos(1, 2, 0, b'', (0.0, 0.0, 0.0), 0.0, [])))
     line(*pos_tokens('long-names', pack_pos(9, 9, POS_IN_WORLD, b'a' * POS_TEXT_MAX, (1.0, 2.0, 3.0), 0.25,
                                             [(b'n' * POS_TEXT_MAX, float(i)) for i in range(POS_SLOTS)])))
+    line(*pos_tokens('colours', pack_pos(11, 5000, POS_IN_WORLD, b'HyruleField', (1.0, 0.0, -2.0), 0.5, [(b'Walk', 1.0)],
+                                         colour=1, want=0, place=2, upper=0b111, sig=0x89abcdef)))
+    line(*pos_tokens('colours-last', pack_pos(12, 5067, POS_IN_WORLD, b'HyruleField', (1.0, 0.0, -2.0), 0.5, [],
+                                              colour=3, want=3, place=0xFFFF, upper=0b010, sig=1)))
+    gear = pos_gear(dyn=[(0, (2, b'Sword')), (1, (1, b'Shield')), (4, (0, b'Ocarina'))],
+                    stat=[(1, b'Tunic'), (3, b'Boots'), (12, b'Sheath')])
+    sword = pack_pos(13, 6000, POS_IN_WORLD, b'HyruleField', (3.0, 0.5, 4.0), -1.25, [(b'Walk', 2.0), (b'Upper', 0.5)],
+                     colour=0, want=POS_COLOUR_NONE, place=1, upper=0b110, sig=gear_sig(gear), gear=gear)
+    line(*pos_tokens('gear', sword))
+    plain = pack_pos(13, 6000, POS_IN_WORLD, b'HyruleField', (3.0, 0.5, 4.0), -1.25, [(b'Walk', 2.0), (b'Upper', 0.5)],
+                     colour=0, want=POS_COLOUR_NONE, place=1, upper=0b110, sig=gear_sig(gear))   # the same without the gear
+    line(*pos_tokens('gear-sig-only', plain))
+    line(*pos_tokens('gear-empty', pack_pos(14, 6067, POS_IN_WORLD, b'HyruleField', (0.0, 0.0, 0.0), 0.0, [],
+                                            colour=2, sig=gear_sig(NO_GEAR), gear=NO_GEAR)))
+    full = pos_gear(dyn=[(j, (j % 3, bytes([0x41 + j]) * POS_TEXT_MAX)) for j in range(POS_GEAR_DYN)],
+                    stat=[(s, bytes([0x61 + s]) * POS_TEXT_MAX) for s in range(POS_GEAR_STAT)])
+    line(*pos_tokens('gear-full', pack_pos(15, 6134, POS_ADULT | POS_IN_WORLD, b'a' * POS_TEXT_MAX, (1.0, 2.0, 3.0), 0.25,
+                                           [(b'n' * POS_TEXT_MAX, float(i)) for i in range(POS_SLOTS)], colour=3, want=2,
+                                           place=4, upper=0, sig=gear_sig(full), gear=full)))
 
     zeros = bytes(16)
     ping = cr.pack(cr.T_PING, 0, 0, 0, 1, b'abcd')
@@ -221,11 +334,31 @@ def build_vectors():
         ('sealed', 'short', bytes([1]) + bytes(28)),
         ('sealed', 'version', bytes([2]) + bytes(40)),
         ('pos', 'version-1', bytes([1]) + walk[1:]),
+        ('pos', 'version-2', bytes([2]) + walk[1:]),
+        ('pos', 'version-2-layout', bytes([POS_VERSION]) + walk[1:-9]),
         ('pos', 'cut', walk[:-1]),
         ('pos', 'trailing', walk + b'x'),
-        ('pos', 'area-48', struct.pack('<BIIBB', POS_VERSION, 0, 0, 0, 48) + bytes(48) + bytes(17)),
-        ('pos', 'slots-5', pack_pos(0, 0, 0, b'', (0.0, 0.0, 0.0), 0.0, [])[:-1] + bytes([5]) + bytes(25)),
-        ('pos', 'node-48', pack_pos(0, 0, 0, b'', (0.0, 0.0, 0.0), 0.0, [])[:-1] + bytes([1, 48]) + bytes(52)),
+        ('pos', 'area-48', struct.pack('<BIIBB', POS_VERSION, 0, 0, 0, 48) + bytes(48) + bytes(17) + bytes([0xFF] * 2) + bytes(7)),
+        ('pos', 'slots-5', pack_pos(0, 0, 0, b'', (0.0, 0.0, 0.0), 0.0, [])[:-10] + bytes([5]) + bytes(25)),
+        ('pos', 'node-48', pack_pos(0, 0, 0, b'', (0.0, 0.0, 0.0), 0.0, [])[:-10] + bytes([1, 48]) + bytes(52)),
+        ('pos', 'colour-4', pack_pos(1, 2, POS_IN_WORLD, b'HyruleField', (0.0, 0.0, 0.0), 0.0, [], colour=4)),
+        ('pos', 'want-254', pack_pos(1, 2, POS_IN_WORLD, b'HyruleField', (0.0, 0.0, 0.0), 0.0, [], want=0xFE)),
+        ('pos', 'gear-flag-no-block', plain[:9] + bytes([plain[9] | POS_GEAR]) + plain[10:]),
+        ('pos', 'gear-block-no-flag', sword[:9] + bytes([sword[9] & ~POS_GEAR]) + sword[10:]),
+        ('pos', 'gear-cut', sword[:-1]),
+        ('pos', 'gear-trailing', sword + b'x'),
+        ('pos', 'gear-hand-bit-7', pack_pos(1, 2, POS_IN_WORLD, b'', (0.0, 0.0, 0.0), 0.0, [], gear=NO_GEAR)[:-3] +
+         struct.pack('<BH', 0x80, 0) + bytes([0, 1]) + b'X'),
+        ('pos', 'gear-body-bit-13', pack_pos(1, 2, POS_IN_WORLD, b'', (0.0, 0.0, 0.0), 0.0, [], gear=NO_GEAR)[:-3] +
+         struct.pack('<BH', 0, 1 << 13) + bytes([1]) + b'X'),
+        ('pos', 'gear-state-3', pack_pos(1, 2, POS_IN_WORLD, b'', (0.0, 0.0, 0.0), 0.0, [],
+                                         gear=pos_gear(dyn=[(0, (2, b'Sword'))]))[:-7] + bytes([3, 5]) + b'Sword'),
+        ('pos', 'gear-name-empty', pack_pos(1, 2, POS_IN_WORLD, b'', (0.0, 0.0, 0.0), 0.0, [], gear=NO_GEAR)[:-3] +
+         struct.pack('<BH', 0, 1) + bytes([0])),
+        ('pos', 'gear-name-48', pack_pos(1, 2, POS_IN_WORLD, b'', (0.0, 0.0, 0.0), 0.0, [], gear=NO_GEAR)[:-3] +
+         struct.pack('<BH', 0, 1) + bytes([48]) + b'b' * 48),
+        ('pos', 'gear-name-newline', pack_pos(1, 2, POS_IN_WORLD, b'', (0.0, 0.0, 0.0), 0.0, [],
+                                              gear=pos_gear(stat=[(0, b'Tu\nic')]))),
         ('pos', 'area-newline', pack_pos(1, 2, POS_IN_WORLD, b'Hyrule\nField', (0.0, 0.0, 0.0), 0.0, [])),
         ('pos', 'area-utf8', pack_pos(1, 2, POS_IN_WORLD, 'Zoë'.encode(), (0.0, 0.0, 0.0), 0.0, [])),
         ('pos', 'node-nul', pack_pos(1, 2, POS_IN_WORLD, b'HyruleField', (0.0, 0.0, 0.0), 0.0, [(b'Wa\0k', 1.0)])),
@@ -362,11 +495,18 @@ class CodecTest(unittest.TestCase):
                                  (cr.ENV_V1, (int(sess, 16), int(ctr)), cr.ENV_HDR + cr.ENV_MAC + 1 + len(unhex(msg))), name)
             elif kind == 'pos':
                 name, payload = t[0], unhex(t[1])
-                pseq, t_ms, flags, area, x, y, z, yaw = t[2:10]
-                want = (int(pseq), int(t_ms), int(flags), unhex(area), (float(x), float(y), float(z)), float(yaw),
-                        tuple((unhex(s.split(':')[0]), float(s.split(':')[1])) for s in t[10:]))
+                pseq, t_ms, flags, area, x, y, z, yaw, colour, want_c, place, upper, sig = t[2:15]
+                slots = tuple((unhex(s.split(':')[0]), float(s.split(':')[1])) for s in t[15:] if '=' not in s)
+                dyn = [(int(s[1:].split('=')[0]), (int(s.split('=')[1].split(':')[0]), unhex(s.split(':')[1])))
+                       for s in t[15:] if s.startswith('d') and '=' in s]
+                stat = [(int(s[1:].split('=')[0]), unhex(s.split('=')[1])) for s in t[15:] if s.startswith('s') and '=' in s]
+                gear = pos_gear(dyn, stat) if int(flags) & POS_GEAR else None
+                want = (int(pseq), int(t_ms), int(flags), unhex(area), (float(x), float(y), float(z)), float(yaw), slots,
+                        int(colour), int(want_c), int(place), int(upper), int(sig), gear)
                 self.assertEqual(parse_pos(payload), want, name)
-                self.assertEqual(pack_pos(*want[:6], list(want[6])), payload, name)
+                self.assertEqual(pack_pos(*want[:6], list(want[6]), *want[7:12], gear=gear), payload, name)
+                if gear is not None:
+                    self.assertEqual(gear_sig(gear), int(sig), name)
             elif kind == 'reject':
                 what, data = t[0], unhex(t[2])
                 parsers = {'dgram': cr.parse, 'connect': cr.parse_connect, 'challenge': cr.parse_challenge, 'roster': cr.parse_roster,

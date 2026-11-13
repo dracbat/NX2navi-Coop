@@ -444,15 +444,39 @@ static int printable(const uint8_t *p, size_t n) {
 
 enum { POS_HEAD = 11 };   // version, pseq, t_ms, flags, area length
 
-size_t coop_pos_pack(uint8_t *out, size_t cap, const CoopPos *p) {
+enum { POS_V3_FIXED = 9 };   // colour, want, place (u16), upper, gear signature (u32)
+
+uint32_t coop_gear_sig(const CoopGear *g) {
+    uint32_t h = 2166136261u;
+    for (int j = 0; j < COOP_POS_GEAR_DYN; j++) {
+        for (const char *s = g->dyn[j]; *s; s++) h = (h ^ (uint8_t)*s) * 16777619u;
+        h = (h ^ (g->dyn[j][0] ? 0x100u + g->state[j] : 0x55u)) * 16777619u;
+    }
+    for (int s = 0; s < COOP_POS_GEAR_STAT; s++) {
+        for (const char *t = g->stat[s]; *t; t++) h = (h ^ (uint8_t)*t) * 16777619u;
+        h = (h ^ 0x77u) * 16777619u;
+    }
+    return h ? h : 1;
+}
+
+size_t coop_pos_pack_gear(uint8_t *out, size_t cap, const CoopPos *p, const CoopGear *gear) {
     size_t alen = bounded_len(p->area, COOP_POS_TEXT), n = POS_HEAD + alen + 17;
     int slots = p->nslots < COOP_POS_SLOTS ? p->nslots : COOP_POS_SLOTS;
     for (int i = 0; i < slots; i++) n += 1 + bounded_len(p->slot[i].node, COOP_POS_TEXT) + 4;
+    n += POS_V3_FIXED;
+    uint32_t dmask = 0, smask = 0;
+    if (gear) {
+        n += 3;
+        for (int j = 0; j < COOP_POS_GEAR_DYN; j++)
+            if (gear->dyn[j][0]) dmask |= 1u << j, n += 2 + bounded_len(gear->dyn[j], COOP_POS_TEXT);
+        for (int s = 0; s < COOP_POS_GEAR_STAT; s++)
+            if (gear->stat[s][0]) smask |= 1u << s, n += 1 + bounded_len(gear->stat[s], COOP_POS_TEXT);
+    }
     if (cap < n) return 0;
     out[0] = COOP_POS_VERSION;
     put32(out + 1, p->pseq);
     put32(out + 5, p->t_ms);
-    out[9] = p->flags, out[10] = (uint8_t)alen;
+    out[9] = (uint8_t)(gear ? p->flags | COOP_POS_GEAR : p->flags & ~COOP_POS_GEAR), out[10] = (uint8_t)alen;
     memcpy(out + POS_HEAD, p->area, alen);
     uint8_t *q = out + POS_HEAD + alen;
     for (int k = 0; k < 3; k++) putf(q + 4 * k, p->pos[k]);
@@ -465,10 +489,47 @@ size_t coop_pos_pack(uint8_t *out, size_t cap, const CoopPos *p) {
         putf(q + 1 + len, p->slot[i].frame);
         q += 1 + len + 4;
     }
+    q[0] = p->colour, q[1] = p->want;
+    put16(q + 2, p->place);
+    q[4] = p->upper;
+    put32(q + 5, p->gear_sig);
+    q += POS_V3_FIXED;
+    if (gear) {
+        q[0] = (uint8_t)dmask;
+        put16(q + 1, smask);
+        q += 3;
+        for (int j = 0; j < COOP_POS_GEAR_DYN; j++) {
+            if (!(dmask >> j & 1)) continue;
+            size_t len = bounded_len(gear->dyn[j], COOP_POS_TEXT);
+            q[0] = gear->state[j], q[1] = (uint8_t)len;
+            memcpy(q + 2, gear->dyn[j], len);
+            q += 2 + len;
+        }
+        for (int s = 0; s < COOP_POS_GEAR_STAT; s++) {
+            if (!(smask >> s & 1)) continue;
+            size_t len = bounded_len(gear->stat[s], COOP_POS_TEXT);
+            q[0] = (uint8_t)len;
+            memcpy(q + 1, gear->stat[s], len);
+            q += 1 + len;
+        }
+    }
     return n;
 }
 
-int coop_pos_parse(const uint8_t *p, size_t n, CoopPos *out) {
+size_t coop_pos_pack(uint8_t *out, size_t cap, const CoopPos *p) { return coop_pos_pack_gear(out, cap, p, NULL); }
+
+// One name of a gear block at p[*at] (u8 length, then the bytes) into out; 0 when it runs past n, is longer than
+// COOP_POS_TEXT, is empty, or is not printable ASCII.
+static int gear_name_take(const uint8_t *p, size_t n, size_t *at, char *out) {
+    if (*at >= n) return 0;
+    size_t len = p[*at];
+    if (!len || len > COOP_POS_TEXT || *at + 1 + len > n || !printable(p + *at + 1, len)) return 0;
+    if (out) memcpy(out, p + *at + 1, len), out[len] = 0;
+    *at += 1 + len;
+    return 1;
+}
+
+int coop_pos_parse_gear(const uint8_t *p, size_t n, CoopPos *out, CoopGear *gear) {
     if (n < POS_HEAD || p[0] != COOP_POS_VERSION || p[10] > COOP_POS_TEXT || n < POS_HEAD + p[10] + 17u ||
         !printable(p + POS_HEAD, p[10]))
         return 0;
@@ -489,10 +550,35 @@ int coop_pos_parse(const uint8_t *p, size_t n, CoopPos *out) {
         memcpy(r.slot[i].node, p + at + 1, p[at]);
         at += 1u + p[at] + 4;
     }
+    if (at + POS_V3_FIXED > n) return 0;
+    r.colour = p[at], r.want = p[at + 1], r.place = (uint16_t)get16(p + at + 2), r.upper = p[at + 4];
+    r.gear_sig = get32(p + at + 5);
+    at += POS_V3_FIXED;
+    if ((r.colour >= COOP_COLOURS && r.colour != COOP_COLOUR_NONE) || (r.want >= COOP_COLOURS && r.want != COOP_COLOUR_NONE))
+        return 0;
+    CoopGear g;
+    memset(&g, 0, sizeof g);
+    if (r.flags & COOP_POS_GEAR) {
+        if (at + 3 > n) return 0;
+        uint32_t dmask = p[at], smask = get16(p + at + 1);
+        at += 3;
+        if (dmask >> COOP_POS_GEAR_DYN || smask >> COOP_POS_GEAR_STAT) return 0;
+        for (int j = 0; j < COOP_POS_GEAR_DYN; j++) {
+            if (!(dmask >> j & 1)) continue;
+            if (at >= n || p[at] > 2) return 0;
+            g.state[j] = p[at++];
+            if (!gear_name_take(p, n, &at, g.dyn[j])) return 0;
+        }
+        for (int s = 0; s < COOP_POS_GEAR_STAT; s++)
+            if (smask >> s & 1 && !gear_name_take(p, n, &at, g.stat[s])) return 0;
+    }
     if (at != n) return 0;
     *out = r;
+    if (gear) *gear = g;
     return 1;
 }
+
+int coop_pos_parse(const uint8_t *p, size_t n, CoopPos *out) { return coop_pos_parse_gear(p, n, out, NULL); }
 
 int coop_pos_fresh(CoopPosSeen *s, uint64_t session, uint32_t pseq, uint64_t now_ms) {
     int again = !s->any || s->session != session || now_ms - s->at_ms >= COOP_POS_QUIET_MS;
