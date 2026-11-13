@@ -158,9 +158,10 @@ ever rises: two games that set the same flag agree whatever the order.
 NX2navi Co-op plays the game together beyond the progress above: the other players as Links of their own, in their
 gear and their colours (green, red, blue or purple), with their names above them; shared kills and hits on placed
 enemies, with enemies tougher by the number of players; story cutscenes watched together; talks with NPCs kept each
-player's own; the room's time of day; and the era following the players both ways. These are being moved onto the co-op
-through Steam described here, one at a time. Until a feature is moved its code waits in `runtime/coop_pending`, out of
-the build, and its settings (the NX2navi Co-op block of `[coop]` in `nx2navi.ini.example`) do nothing.
+player's own; the room's time of day; and the era following the players both ways. All of them run on the co-op through
+Steam described here (`runtime/coop_ext.c` carries their messages between the games of a room), with the settings of the
+NX2navi Co-op block of `[coop]` in `nx2navi.ini.example`. The room's host keeps the room's time of day and era, and
+sends them at once to a player who comes: a player who joins in the other era is taken into the room's era.
 
 NX2navi Co-op's rooms are its own: their lobbies carry the note `nx2navi_coop = 1` instead of `nx2navi = 1`, and its
 protocol numbers count from 1001. A game of NX2navi itself leaves an NX2navi Co-op lobby as somebody else's and an
