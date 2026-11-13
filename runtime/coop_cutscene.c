@@ -257,6 +257,7 @@ static struct {
     uint32_t tl;                 // the newest time order this game knows in this room (a Lamport clock)
     int t_known;                 // ... one is known (the first one heard is taken as it is)
     uint32_t t_last, t_seq;
+    unsigned t_loads;            // coop_game_load_serial when t_last was last taken as a base
     int t_have_last, t_pend, t_pend_jump, t_pend_from, t_keeper, t_greet_due, t_low;
     uint32_t t_target, t_expect;
     uint64_t t_beat_at, t_pend_at, t_expect_until, t_moved_at, t_reply_at, t_far_said;
@@ -715,7 +716,9 @@ static void time_frame(Cpu *c, const EvNow *e, uint64_t player, const char *area
     uint64_t wm = world_mgr(), part = wm ? rd_ptr(wm + 0x510) : 0;
     uint32_t tod = 0;
     if (!part || !rd(part + TOD_OFF, &tod, 4) || tod >= COOP_TIME_DAY) return;
-    int in_world = player && area[0];
+    // Link counts as in the world only while a save is played since the title screen: there Link's actor and the area
+    // flag stay from the save played before, and the time stands for none
+    int in_world = player && area[0] && coop_game_played();
     char a[8], b[8];
     Who w;
     int self = atomic_load(&C.self), host = atomic_load(&C.host);
@@ -725,6 +728,10 @@ static void time_frame(Cpu *c, const EvNow *e, uint64_t player, const char *area
         say("time: %s", keeper ? "this game keeps the room's time (the room's host): its time goes out every 2 s"
                                : "the room's host keeps the room's time");
     }
+    // a save loaded (another one, the same one again, or the title screen): its time is this game's new base, not a
+    // jump of its clock that the room would take from it
+    unsigned loads = coop_game_load_serial();
+    if (loads != C.t_loads) C.t_loads = loads, C.t_have_last = 0;
     // a jump of this game's own clock
     if (C.t_have_last && tod_dist(tod, C.t_last) > 600) {
         if (now < C.t_expect_until && tod_dist(tod, C.t_expect) < 300) {
