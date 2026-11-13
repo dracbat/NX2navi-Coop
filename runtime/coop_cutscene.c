@@ -746,7 +746,9 @@ static void time_frame(Cpu *c, const EvNow *e, uint64_t player, const char *area
         if (rel == O_NEWER || (rel == O_FAR && from_host) || (rel == O_SAME && !keeper && (jump || from_host))) {
             if (rel != O_SAME || jump || !C.t_known) C.t_pend_jump = 1;   // the first time heard is set as a jump
             C.tl = m->order, C.t_known = 1;
-            C.t_pend = 1, C.t_target = m->tod, C.t_pend_at = in[i].at, C.t_pend_from = from;
+            // heard when it was stored, or now if that is later: the co-op thread can store one after this frame's
+            // clock was read, and the age at the set below must not wrap round
+            C.t_pend = 1, C.t_target = m->tod, C.t_pend_at = in[i].at < now ? in[i].at : now, C.t_pend_from = from;
         } else if (rel == O_OLDER) {
             C.t_low = from;
         } else if (rel == O_FAR && now - C.t_far_said >= FAR_SAY_MS) {
