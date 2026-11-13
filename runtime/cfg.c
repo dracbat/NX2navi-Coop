@@ -93,6 +93,8 @@ static const char *const known[] = {
     "COOP_COLOUR_SELF", "COOP_COLOUR_TEST", "COOP_COLOUR_PARAM", "COOP_COLOUR_STRENGTH", "COOP_COLOUR_RGB", "COOP_COLOUR_NATIVE", "COOP_COLOUR_PROBE", "COOP_COLOUR_PROBE_TEST", "COOP_COLOUR_DARK", "COOP_COLOUR_DIAG",   // the Links' player colours (coop_puppet.c); no menu row
     "COOP_COLOUR", "COOP_COLOURS", "COOP_POS_GEAR",   // the colour picked, room colours, the gear in POS (coop_puppet.c); no row
     "COOP_TAGS", "COOP_TAGS_TEST", "COOP_TAGS_LOG", "COOP_TAGS_HEAD", "COOP_TAGS_SIZE", "COOP_TAGS_CAM",   // name tags (coop_tags.h); no row
+    "COOP_LIFE_HOOK", "COOP_KILLS", "COOP_DAMAGE", "COOP_DAMAGE_BOSS", "COOP_SCALE", "COOP_SCALE_PLAYERS",   // kills, shared damage and
+    "COOP_SCALE_HP", "COOP_SCALE_TAKEN", "COOP_SHARE_DENY", "COOP_KILL_TEST", "COOP_KILL_LOG",               // difficulty (coop_kill.c); no row
     "COOP_RESET_POOLS",   // the room's maker resets the pools when it changes to a value other than 0 (coop_game.c); no row (the tab's Reset the pools)
 };
 

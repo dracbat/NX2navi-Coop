@@ -36,6 +36,9 @@
 // and empty upper slots, so that the other players' puppets get gear, colours and arms as the shadow test's does; the
 // room gives every member its own colour (section "room colours": NX2NAVI_COOP_COLOUR picks, NX2NAVI_COOP_COLOURS=0 off).
 // NX2NAVI_COOP_PUPPET_TEST=spike|shadow are the one-game tests.
+// Kills, shared damage and difficulty live in coop_kill.c: this file's frame
+// hook hands it the area and Link (coop_kill_frame), its present switch runs it (coop_kill_present) and keeps the hook
+// on while it needs it, and coop_puppet_world_others tells it the members in the game world (from their POS).
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +48,7 @@
 #include "coop.h"
 #include "coop_offer.h"
 #include "coop_puppet.h"
+#include "coop_kill.h"
 #include "coop_tags.h"
 #include "host.h"
 #include "platform/platform.h"
@@ -1421,6 +1425,43 @@ static void on_view(const CoopView *v, void *user) {
     plat_mutex_unlock(&N.lock);
 }
 
+// Kills and difficulty (coop_kill.c, any thread): the other members in the game world now, by their POS: accepted and
+// identified (coop_game_shown), heard within SILENT_MS, and their newest pose says IN_WORLD. -1 when no member's POS
+// came at all (the puppets are off: no POS goes out), so that the caller counts the roster instead.
+int coop_puppet_world_others(void) {
+    if (!N.others) return 0;
+    uint32_t shown = coop_game_shown();
+    uint64_t now = plat_now_ms();
+    int n = 0, heard = 0, self = N.self;
+    plat_mutex_lock(&N.lock);
+    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
+        const Remote *r = &N.r[id];
+        if (id == self || !r->n) continue;
+        heard = 1;
+        if (shown >> id & 1 && now - r->recv_ms[r->head] < SILENT_MS && (r->pose[r->head].flags & COOP_POS_IN_WORLD)) n++;
+    }
+    plat_mutex_unlock(&N.lock);
+    return heard ? n : -1;
+}
+
+// Kills tests (coop_kill.c, any thread): the other members whose newest POS (heard within SILENT_MS, accepted and
+// identified, IN_WORLD) names this area.
+int coop_puppet_area_others(const char *area) {
+    if (!N.others || !area || !area[0]) return 0;
+    uint32_t shown = coop_game_shown();
+    uint64_t now = plat_now_ms();
+    int n = 0, self = N.self;
+    plat_mutex_lock(&N.lock);
+    for (int id = 1; id <= COOP_MAX_MEMBERS; id++) {
+        const Remote *r = &N.r[id];
+        if (id == self || !r->n || !(shown >> id & 1) || now - r->recv_ms[r->head] >= SILENT_MS) continue;
+        const CoopPos *q = &r->pose[r->head];
+        if ((q->flags & COOP_POS_IN_WORLD) && !strcmp(q->area, area)) n++;
+    }
+    plat_mutex_unlock(&N.lock);
+    return n;
+}
+
 static float lerp_angle(float a, float b, float t) {
     float d = fmodf(b - a + 3.14159265f, 6.28318531f);
     if (d < 0) d += 6.28318531f;
@@ -2401,6 +2442,7 @@ static void puppet_frame(Cpu *c) {
         if (P.test == 1) spike(c, player);
         if (P.test == 2) shadow(c, player);
     }
+    coop_kill_frame(c, player, area);   // kills, shared damage, difficulty (coop_kill.c): the area and Link's life component
     // the other players (and, in a room, the room's colours: the local Link's too, even alone in it); once more after
     // leaving a room, to take its colours away
     if ((P.remote && (N.others || N.in_room)) || N.alive || RC.colour != COL_NONE) remotes(c, player, area);
@@ -2462,8 +2504,10 @@ void coop_puppet_present(void) {
     // on while there are others in the room to show (NX2NAVI_COOP_PUPPETS) or puppets to remove, or the local Link
     // has a colour (or still carries one), or this player is in a room with room colours; off (the original call)
     // otherwise
+    // ... and while kills, shared damage or difficulty need the area and Link from it (coop_kill.c)
+    int kills = coop_kill_present();
     int want = P.test != 0 || (P.remote && N.others) || N.alive || CL.self != COL_NONE || CL.dirty ||
-               (RC.on && N.in_room) || RC.colour != COL_NONE;
+               (RC.on && N.in_room) || RC.colour != COL_NONE || kills;
     if (want != P.want) {
         P.want = want;
         rt_patch_switch(P.set, want);
@@ -2477,6 +2521,7 @@ void coop_puppet_init(void) {
     if (P.set < 0) return;
     coop_on_message(COOP_K_POS, on_pos, NULL);
     coop_on_view(on_view, NULL);
+    coop_kill_init();   // kills, shared damage, difficulty (coop_kill.c): its messages and hooks on the co-op thread
 }
 
 __attribute__((constructor)) static void puppet_register(void) {
@@ -2488,4 +2533,9 @@ __attribute__((constructor)) static void puppet_register(void) {
 #else
 void coop_puppet_present(void) {}
 void coop_puppet_init(void) {}
+int coop_puppet_world_others(void) { return -1; }
+int coop_puppet_area_others(const char *area) {
+    (void)area;
+    return 0;
+}
 #endif
