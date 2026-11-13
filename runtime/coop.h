@@ -29,6 +29,7 @@ enum {
     COOP_CHAT_LINES = 8,
     COOP_FRIENDS = 64,
     COOP_GAME_KIND = 16,     // message kinds from here on belong to the game layer (coop_game.c)
+    COOP_EXT_KIND = 0x40,    // the game layer's end below this: from here on they are NX2navi Co-op's modules' (coop_ext.h)
     COOP_MESSAGE_MAX = STEAM_MESSAGE_MAX - 1,   // bytes of a message after its kind
 };
 

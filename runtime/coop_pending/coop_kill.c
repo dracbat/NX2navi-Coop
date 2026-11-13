@@ -71,76 +71,7 @@
 #include "patches.h"
 #endif
 
-// ---- the wire format (no game state)
-
-uint32_t coop_kill_name_hash(const char *s) {   // FNV-1a
-    uint32_t h = 2166136261u;
-    for (; *s; s++) h = (h ^ (uint8_t)*s) * 16777619u;
-    return h;
-}
-
-static void put32(uint8_t *p, uint32_t v) {
-    for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> 8 * i);
-}
-static void put64(uint8_t *p, uint64_t v) {
-    for (int i = 0; i < 8; i++) p[i] = (uint8_t)(v >> 8 * i);
-}
-static uint32_t get32(const uint8_t *p) {
-    uint32_t v = 0;
-    for (int i = 3; i >= 0; i--) v = v << 8 | p[i];
-    return v;
-}
-static uint64_t get64(const uint8_t *p) {
-    uint64_t v = 0;
-    for (int i = 7; i >= 0; i--) v = v << 8 | p[i];
-    return v;
-}
-
-static int area_ok(const char *a, size_t n) {
-    if (n < 1 || n > COOP_KILL_AREA_MAX) return 0;
-    for (size_t i = 0; i < n; i++)
-        if (a[i] < 0x21 || a[i] > 0x7e) return 0;
-    return 1;
-}
-
-size_t coop_kill_pack(uint8_t kind, const CoopKillMsg *m, uint8_t *out, size_t cap) {
-    size_t al = strnlen(m->area, COOP_KILL_AREA_MAX + 1);
-    if ((kind != COOP_K_KILL && kind != COOP_K_DAMAGE) || !area_ok(m->area, al) || !m->inst || m->inst == UINT64_MAX)
-        return 0;
-    if (kind == COOP_K_DAMAGE && (m->raw < 1 || m->raw > 1000)) return 0;
-    size_t n = 10 + al + 8 + 4 + (kind == COOP_K_DAMAGE ? 2 : 0) + 1;
-    if (n > cap) return 0;
-    uint8_t *p = out;
-    *p++ = COOP_KILL_VERSION;
-    put32(p, m->epoch), p += 4;
-    put32(p, m->eseq), p += 4;
-    *p++ = (uint8_t)al;
-    memcpy(p, m->area, al), p += al;
-    put64(p, m->inst), p += 8;
-    put32(p, m->name_hash), p += 4;
-    if (kind == COOP_K_DAMAGE) {
-        *p++ = (uint8_t)m->raw;
-        *p++ = (uint8_t)(m->raw >> 8);
-    }
-    *p++ = m->flags;
-    return (size_t)(p - out);
-}
-
-int coop_kill_parse(uint8_t kind, const uint8_t *b, size_t n, CoopKillMsg *m) {
-    memset(m, 0, sizeof *m);
-    if ((kind != COOP_K_KILL && kind != COOP_K_DAMAGE) || n < 10 || b[0] != COOP_KILL_VERSION) return 0;
-    size_t al = b[9];
-    if (n != 10 + al + 8 + 4 + (kind == COOP_K_DAMAGE ? 2u : 0u) + 1 || !area_ok((const char *)b + 10, al)) return 0;
-    m->epoch = get32(b + 1), m->eseq = get32(b + 5);
-    memcpy(m->area, b + 10, al);
-    m->area[al] = 0;
-    const uint8_t *p = b + 10 + al;
-    m->inst = get64(p), p += 8;
-    m->name_hash = get32(p), p += 4;
-    if (kind == COOP_K_DAMAGE) m->raw = (uint16_t)(p[0] | p[1] << 8), p += 2;
-    m->flags = *p;
-    return m->inst && m->inst != UINT64_MAX && (kind != COOP_K_DAMAGE || (m->raw >= 1 && m->raw <= 1000));
-}
+// The bytes of KILL and DAMAGE: coop_ext_wire.c (coop_kill_pack, coop_kill_parse, coop_kill_name_hash).
 
 // A receiver's window per sender: an event (its eseq) is taken once, its repeats and anything 64 events older are not;
 // a new epoch (the sender started again) starts the window again.
