@@ -37,6 +37,8 @@ STEPS = {
                                                  'change are kept from the last build.'),
     'shaders': ('Prepare the Shaders', "Building the game's known shaders for your graphics card ahead of time, so "
                                        'play stops for them far less often.'),
+    'coop': ('Make the Co-op Players', "Making the Link the other players of a co-op room are shown as, from your own "
+                                       'game files.'),
     'prompts': ('Draw the Button Prompts', 'Drawing the Xbox, PlayStation, Steam Deck and keyboard and mouse button prompts the '
                                            "game's Controls menu offers under Button prompts."),
     'scan': ('Check the Game Files', 'Decompressing every game file once to find damage, and standing in for damaged '
@@ -47,7 +49,8 @@ STEPS = {
     'swap': ('Swap In the New Build', 'Linking the new build. It replaces the old one only once it is complete.'),
 }
 WEIGHTS = {'tools': 12, 'tools_update': 4, 'check': 1, 'exefs': 2, 'romfs': 14, 'lift': 14, 'compile': 55,
-           'compile_changed': 55, 'shaders': 18, 'prompts': 4, 'scan': 5, 'ready': 0, 'download': 8, 'verify': 1, 'swap': 6}
+           'compile_changed': 55, 'shaders': 18, 'coop': 1, 'prompts': 4, 'scan': 5, 'ready': 0, 'download': 8, 'verify': 1,
+           'swap': 6}
 
 
 # The game files tools/romfs_check.py reports as damaged on every copy of the game looked at so far: they are that
@@ -83,6 +86,12 @@ def scan_summary(damaged, stood_in):
 def prompt_rows(ctx):
     """The prompts row, for a version with button art (make_game.py draws the prompts after the shaders), or none."""
     return ['prompts'] if build.has_prompt_art(ctx.layout) else []
+
+
+def coop_rows(ctx):
+    """The coop row, for a version with the puppet tool (make_game.py makes the co-op players after the shaders), or
+    none."""
+    return ['coop'] if (ctx.layout.tools / 'make_puppet_mod.py').is_file() else []
 
 
 def mmss(seconds):
@@ -316,8 +325,8 @@ class Job:
                         self.finish(link_step)
                     else:
                         self.finish(sid)
-                elif st == 'skip':
-                    self.skip(sid, 'Kept' if sid in ('exefs', 'romfs') else 'Unchanged')
+                elif st == 'skip':   # a value of its own when it says more ("Not Made": the coop step failed)
+                    self.skip(sid, ev.get('value') or ('Kept' if sid in ('exefs', 'romfs') else 'Unchanged'))
                     if link_step and sid in ('compile', 'compile_changed'):
                         self.skip(link_step, 'Unchanged')
             elif kind == 'progress' and sid and 'fraction' in ev:   # a step that words its own progress (shaders)
@@ -361,8 +370,8 @@ class InstallJob(Job):
     title = 'Installing'
 
     def __init__(self, ctx, dump, game_dir):
-        super().__init__(ctx, ['tools', 'check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', *prompt_rows(ctx),
-                               'scan', 'ready'])
+        super().__init__(ctx, ['tools', 'check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', *coop_rows(ctx),
+                               *prompt_rows(ctx), 'scan', 'ready'])
         self.dump, self.game_dir = str(dump), str(game_dir)
 
     def args(self):
@@ -377,8 +386,8 @@ class InstallJob(Job):
     def run(self):
         self.ensure_tools('tools')
         self.make_game(self.args(),
-                       {s: s for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'prompts', 'scan')})
-        for sid in ('shaders', 'prompts', 'scan'):
+                       {s: s for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'coop', 'prompts', 'scan')})
+        for sid in ('shaders', 'coop', 'prompts', 'scan'):
             if self.step(sid) and self.step(sid).state == PENDING:
                 self.skip(sid)
         self.note_scan(self.game_dir)
@@ -395,7 +404,8 @@ class RebuildJob(Job):
     retune = True   # Rebuild the Game: the game's code for this processor's level (build.rebuild_args)
 
     def __init__(self, ctx, game_dir, dump=''):
-        super().__init__(ctx, ['tools_update', 'lift', 'compile_changed', 'swap', 'shaders', *prompt_rows(ctx), 'scan'])
+        super().__init__(ctx, ['tools_update', 'lift', 'compile_changed', 'swap', 'shaders', *coop_rows(ctx),
+                               *prompt_rows(ctx), 'scan'])
         self.game_dir, self.dump = str(game_dir), dump
 
     def run(self):
@@ -409,9 +419,10 @@ class RebuildJob(Job):
             args = build.install_args(layout, self.dump, self.game_dir)
         else:
             raise build.BuildError('the game folder has no earlier build: install the game again')
-        self.make_game(args, {'lift': 'lift', 'compile': 'compile_changed', 'shaders': 'shaders', 'prompts': 'prompts', 'scan': 'scan'},
+        self.make_game(args, {'lift': 'lift', 'compile': 'compile_changed', 'shaders': 'shaders', 'coop': 'coop',
+                              'prompts': 'prompts', 'scan': 'scan'},
                        link_step='swap')
-        for sid in ('lift', 'compile_changed', 'swap', 'shaders', 'prompts', 'scan'):
+        for sid in ('lift', 'compile_changed', 'swap', 'shaders', 'coop', 'prompts', 'scan'):
             if self.step(sid) and self.step(sid).state == PENDING:
                 self.skip(sid)
         self.note_scan(self.game_dir)
@@ -466,7 +477,7 @@ class ContinueUpdateJob(RebuildJob):
 
     def __init__(self, ctx, game_dir, old, dump=''):
         Job.__init__(self, ctx, ['download', 'verify', 'tools_update', 'lift', 'compile_changed', 'swap', 'shaders',
-                                 *prompt_rows(ctx), 'scan'], ctx.layout.version)
+                                 *coop_rows(ctx), *prompt_rows(ctx), 'scan'], ctx.layout.version)
         self.game_dir, self.dump, self.old = str(game_dir), dump, old
         self.title = f'Updating to {versions.display(ctx.layout.version)}'
         for sid, value in (('download', 'Done'), ('verify', 'Checksum OK')):
@@ -477,7 +488,7 @@ class ContinueUpdateJob(RebuildJob):
             RebuildJob.run(self)
         else:
             self.ensure_tools('tools_update')
-            for sid in ('lift', 'compile_changed', 'swap', 'shaders', 'prompts', 'scan'):
+            for sid in ('lift', 'compile_changed', 'swap', 'shaders', 'coop', 'prompts', 'scan'):
                 self.skip(sid, 'No game yet')
         updater.prune(self.ctx.layout)
 
