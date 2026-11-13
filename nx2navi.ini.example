@@ -621,8 +621,8 @@
 # discord_image = nx2navi_512x512
 
 [coop]
-# Co-op: your own game and save, with the other players' progress shared through a relay (docs/coop.md). Positions are
-# not shared yet: you do not see the other players in your world.
+# Co-op: your own game and save, with the other players' progress shared through a relay (docs/coop.md). NX2navi Co-op
+# also shows the other players in your world and plays the game together (the keys after coop_reset_pools).
 # The menu's Co-op tab sets the name, the relay and the rules below, and makes, joins, accepts and leaves a room.
 # 0 = off: no socket is opened, no name is looked up and nothing is sent. Takes effect at once.
 # coop = 0
@@ -687,6 +687,32 @@
 # restart keeps you the room's maker; never hand out a copy of the profile folder.
 # coop_remove =
 # coop_reset_pools =
+# NX2navi Co-op (docs/coop.md, "Other players in the world"); no menu rows, and everyone in a room should use the same.
+# The other players as Links of their own, in their gear, made from the files the launcher makes (0 = not shown).
+# coop_puppets = 1
+# Your colour: green, red, blue or purple; auto takes the first one free in the room. Of two players who pick the same,
+# the one who joined first keeps it. coop_colours = 0 shows no room colours.
+# coop_colour = auto
+# coop_colours = 1
+# Each other player's name above his Link, in his colour (0 = none).
+# coop_tags = 1
+# A placed enemy one player kills dies in every world of that area (coop_kills), and each player's hits on it count in
+# every world (coop_damage). A boss keeps its killing blow in each world: lethal shares that too, 0 shares nothing.
+# coop_kills = 1
+# coop_damage = 1
+# coop_damage_boss = safe
+# Enemy health and the damage Link takes by the number of players in the game world, for 1 to 4 players (0 = off).
+# coop_scale = 1
+# coop_scale_hp = 1,1.5,2,2.5
+# coop_scale_taken = 1,1.25,1.5,1.75
+# A story cutscene one player starts plays in every game (0 = off); back returns you to where you were afterwards.
+# coop_cutscenes = 1
+# coop_cutscene_return = stay
+# Talks with NPCs stay each player's own (shared: as in NX2navi), the time of day is the room's (0 = each player's), and
+# the era follows the players: follow, scene (no teleport), own, or shared (as in NX2navi: child to adult only).
+# coop_dialog = own
+# coop_time = 1
+# coop_era = follow
 
 [audio]
 # none mixes without opening an audio device.

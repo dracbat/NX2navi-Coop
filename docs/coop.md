@@ -4,17 +4,19 @@ Each player runs their own game and save; the co-op layer connects the games of 
 game has no multiplayer of its own and its `nn::socket` stays offline: the layer is a host thread of the runtime
 (`runtime/coop.c`) with its own UDP socket.
 
-What exists so far: rooms, the relay, a sealed channel for messages between the players, progress sync (below) and the
-menu's Co-op tab (below), which makes, joins, accepts and leaves a room. The other players are not shown in your
-world, and where your Link is never leaves your PC ("Other players in the world").
+What exists so far: rooms, the relay, a sealed channel for messages between the players, progress sync (below), the
+menu's Co-op tab (below), which makes, joins, accepts and leaves a room, and the game played together: the other
+players shown in your world, shared kills and hits, difficulty by the number of players, cutscenes watched together,
+the time of day and the era ("Other players in the world").
 
 **Co-op is a beta in 0.8.0.** The menu shows its Co-op tab only with `coop_beta = 1` under `[coop]` in `nx2navi.ini`;
 no menu row sets it. Everything below is as it is with the tab shown.
 
 **NX2navi Co-op** shows the tab by default (`coop_beta = 1`), keeps every player's rupees and ammunition their own
 whatever the settings or a room's rules ask for (`coop_wallets = rules` gives the rules their say again;
-`runtime/coop_state.c` coop_rules_normalize), and shows the other players as Links of their own
-(`runtime/coop_puppet.c`; `coop_puppets = 0` turns that off).
+`runtime/coop_state.c` coop_rules_normalize), shows the other players as Links of their own
+(`runtime/coop_puppet.c`; `coop_puppets = 0` turns that off), and keeps each player's talks with NPCs their own
+("Other players in the world").
 
 ## What joining a room means for your save
 
@@ -111,7 +113,7 @@ Read this before you join a room.
 |---|---|---|
 | The relay's operator, and anyone on the network path | that a room exists (a random id and the locator, a value derived from the secret that does not give the secret back), the players' names, their IP addresses, when and how much they send | read, change or make any message between the players; learn the secret; change anyone's save or the room's rules (moving the relay's maker mark changes nothing for a player who accepted). It can drop, delay and send again what a player sent; a player takes one again only as "Replay" below says. |
 | Someone who knows the secret and runs the relay, or sends from its address on your network | all of the above, and every message of the room | make a section, identity, pool record or set of rules in another player's name that a game acts on (each is signed by its maker); change your save other than through a player you accepted, or the rules of a player who accepted. It can also: send a member's messages again (see "Replay": within the last 64 they are refused, but four older ones in a row let it send the member's whole present session again); seal a message in a member's name with a counter far ahead, which costs a player that member's next three messages, each time it does so (one after every three of the member's keeps them out while it keeps sending); send rosters, or identities of another key for a member's session, that keep players from being identified or the room from being accepted while it keeps sending and up to 10 s after; send sections and digests in a member's name that use up what a player checks and takes from that member (128 signatures and 48 KB a second), which delays that member's own while it keeps sending; send digests in a member's name with sums of its choosing (see the sync messages); and, to a player who has not accepted the room yet, make every member's digest carry rules of a key of its own (a member does not sign its digest, only the rules in it are signed, by whoever made them): with no maker in the room, or one it controls, that player's game shows those rules and their key in the offer, so compare that key with the maker's before you accept (step 3 below). None of that changes a save, and none of it lasts longer than said once it stops |
-| The other players in the room | your name, your progress (what the rules share), your messages | your IP address (the relay forwards everything), your account or profile (the id the relay knows you by is random for each start of the game and never shown to them) |
+| The other players in the room | your name, your progress (what the rules share), your messages; in NX2navi Co-op also your area, where your Link is and what he wears and plays, your colour, the enemies you hit and kill, the story cutscenes you start, your time of day and your era ("Other players in the world") | your IP address (the relay forwards everything), your account or profile (the id the relay knows you by is random for each start of the game and never shown to them) |
 | Your log and "Copy system info" | a three-character label hashed from the room's secret (no part of the secret) and the offer's number; system info shows that `coop_room`, `coop_server`, `coop_name` and `coop_accept` are set, not their values | the secret, the relay's address (it appears only with `NX2NAVI_TRACE=coop`) |
 
 ### Going back to your save from before a session
@@ -271,7 +273,7 @@ state, so the new offer and the copy are the answer.
 
 | Category | Rule key | Modes (default first) | What |
 |---|---|---|---|
-| progress | `coop_progress` | `shared`, `own` | story, world and dungeon flags: events, talks, chests, doors, switches, bosses, map and compass |
+| progress | `coop_progress` | `shared`, `own` | story, world and dungeon flags: events, chests, doors, switches, bosses, map and compass (in NX2navi Co-op not the talks with NPCs or the era: "Other players in the world") |
 | items | `coop_items` | `shared`, `own` | equipment, key items, bottles owned, wallet, bag and quiver sizes, magic meter size |
 | songs | `coop_songs` | `shared`, `own` | |
 | quest | `coop_quest` | `shared`, `own` | medallions, spiritual stones, the stone of agony, the gerudo card |
@@ -306,7 +308,9 @@ Never shared, by design or because no reliable way exists yet:
 
 - Where Link is, his health (the game republishes it from the player several times a second, so it cannot be set
   through the flags), the magic in the meter (likewise outside the flags), the time of day (the clock runs in the
-  game's world manager, not in a flag), bottle contents and the equipment worn.
+  game's world manager, not in a flag), bottle contents and the equipment worn. NX2navi Co-op shows where the other
+  players' Links are and what they wear, and shares the time of day, by messages of their own ("Other players in the
+  world").
 - Heart containers and pieces and gold skulltula tokens: most of their pickups are flags of single objects in the world
   that this layer does not write, so a shared count would pay one piece or token twice; the reward flags the game names
   for them stay with each player too, so everyone can collect them.
@@ -514,10 +518,71 @@ with whom and when, with names and addresses. None of that changes a save.
 
 ## Other players in the world
 
-Not in this build. The protocol has a message for it (POS in `runtime/coop_proto.h`: the area, a position, a facing
-and what Link's animation slots play), and its codec and its counter against replayed poses are in the build and
-checked by `--probe-coop`, but nothing sends one and nothing draws another player: a POS that arrives is dropped. So
-no position leaves your PC, whatever the settings.
+NX2navi Co-op plays the game together beyond progress. Every game in a room sends a POS about 15 times a second (POS
+version 3 in `runtime/coop_proto.h`: the area, the position and facing, what Link's animation slots play, the colour
+his Link shows and the one its player picked, the player's place in the room's join order, the arm slots that play
+nothing, and the gear when it changes and every 2 s). What a game applies, it takes only from players its player
+accepted and who are identified (as progress sync does): a POS, kill, hit, cutscene, time or era of anyone else is
+dropped. Every setting below goes under `[coop]` in `nx2navi.ini` or into the environment with `NX2NAVI_`, has no menu
+row, and should be the same for everyone in a room.
+
+- **Seeing each other** (`runtime/coop_puppet.c`): the other players in your area are Links of their own, made from
+  the files the launcher makes from your game (*Make the Co-op Players*), playing what their Links play, with their
+  sword, shield and other gear, drawn and sheathed as theirs. A player's Link appears once that player is accepted and
+  identified, leaves your world when the player leaves the area or the room, and stays out of a story cutscene that
+  plays in your game.
+- **Colours**: every member of a room has a colour of its own, green, red, blue or purple, on the tunic and cap of that
+  player's Link in every game, his own included. A player who picked a colour gets it unless an earlier member has it;
+  everyone else gets the first free colour in the order they joined.
+- **Name tags** (`runtime/coop_tags.h`): each other player's name above his Link, in his colour, smaller with distance
+  and gone beyond 60 m, on the pause screen and while an area loads. They show through walls.
+- **Kills and hits** (`runtime/coop_kill.c`): a placed enemy that one player kills dies in the worlds of the players in
+  the same area, each world with its own death and its own drop for its player, and the hits each player deals to a
+  placed enemy count in every world of that area, so the players fight it together. Enemies the game spawns are left
+  out, and so are mini-bosses, Gold Skulltulas and a few others. A boss takes the other players' hits but keeps at least
+  1 life from them, so its killing blow stays each world's own. An enemy far from every player stops updating, so a
+  kill or a hit waits until a player comes near (at most 60 s; a change of area drops it).
+- **Difficulty**: enemies and bosses take less damage, and Link more, with every player in the game world: enemy health
+  x1, 1.5, 2 and 2.5 and damage to Link x1, 1.25, 1.5 and 1.75 for 1 to 4 players, the last step again for each player
+  more. It follows players as they come and go (one who leaves counts for 10 s more). Instant kills and the game's own
+  changes of life are never scaled.
+- **Cutscenes together** (`runtime/coop_cutscene.c`): a story cutscene one player starts plays in the others' games too.
+  A player in another area is teleported to the start position nearest the first player, with the scene reserved for
+  the arrival, and stays there afterwards. While a game plays its copy, progress sync holds the room's values back, so
+  the scene plays as it would alone. Boss scenes are followed only by players already in that area, and a player busy
+  for 45 s (a menu, a talk) misses the scene.
+- **Dialog**: the talk markers and the HavePlayedEvent flags of the NPC talk events stay out of progress sync, so what a
+  player said to an NPC stays that player's.
+- **The time of day** is the room's: the member with the lowest number keeps it, and a jump in any game (the Sun's Song,
+  a scene, a bed) goes to everyone.
+- **The era** follows the players both ways. The game sets Sequence_IsChildhood from each area it loads, so it is out of
+  progress sync; a change of era goes to the room with the story scene that brought it (the Master Sword's), and a
+  player of the other era plays that scene where it started. When that leaves him in his era, or there is no such
+  scene (a player who joins later), he is teleported into an area of the room's era.
+
+| Key | Default | |
+|---|---|---|
+| `coop_puppets` | `1` | `0`: no other players shown, and no POS sent |
+| `coop_colour` | `auto` | `green`, `red`, `blue` or `purple`: the colour you pick; `auto` the first free one |
+| `coop_colours` | `1` | `0`: no room colours |
+| `coop_pos_gear` | `1` | `0`: your gear is not sent (your Link shows without it in the other games) |
+| `coop_puppet_gear` | `1` | `0`: the other players' Links show without gear |
+| `coop_tags` | `1` | `0`: no name tags |
+| `coop_kills`, `coop_damage` | `1` | `0`: no shared kills, no shared hits |
+| `coop_damage_boss` | `safe` | `lethal`: a boss's killing blow and death are shared too; `0`: bosses share nothing |
+| `coop_scale` | `1` | `0`: no difficulty by the number of players |
+| `coop_scale_hp`, `coop_scale_taken` | `1,1.5,2,2.5`, `1,1.25,1.5,1.75` | the factors for 1 to 4 players |
+| `coop_share_deny` | empty | more actor-name prefixes that are not shared, comma separated |
+| `coop_cutscenes` | `1` | `0`: cutscenes are neither sent nor followed |
+| `coop_cutscene_return` | `stay` | `back`: back to where you were after a followed scene |
+| `coop_cutscene_bosses` | `area` | `all`: boss scenes followed from anywhere; `0`: not at all |
+| `coop_dialog` | `own` | `shared`: the talks with NPCs in progress sync as in NX2navi |
+| `coop_time` | `1` | `0`: the time of day stays each player's |
+| `coop_era` | `follow` | `scene`: only the scene, no teleport; `own`: each player's own era; `shared`: the flag in progress sync as in NX2navi, which takes the era from child to adult only |
+
+`coop_dialog` and `coop_era = shared` change what progress sync shares, so games with other values of them do not merge
+progress at all. The log lines start with `coop: puppet:`, `coop: pos:`, `coop: colour:`, `coop: tags:`, `coop: kill:`,
+`coop: damage:`, `coop: scale:`, `coop: cutscene:` (the time of day's too), `coop: dialog:` and `coop: era:`.
 
 ## In the log
 
