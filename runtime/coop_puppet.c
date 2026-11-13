@@ -1646,6 +1646,10 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
     memcpy(gen, N.gen, sizeof gen);
     memcpy(names, N.name, sizeof names);
     plat_mutex_unlock(&N.lock);
+    // the clock again after the copy: a pose the co-op thread stored meanwhile (while this Link's gear was read and his
+    // PUPPET went out) is then never later than now, whose difference below would else wrap round and let the puppet
+    // go as not heard
+    now = plat_now_ms();
     static uint64_t stats_at;
     if (others && now - stats_at >= 10000) {
         stats_at = now;
