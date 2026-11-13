@@ -6,7 +6,8 @@
 #include "coop_ext_wire.h"   // CUTSCENE, TIME and ERA: their messages and codecs
 #include "cpu.h"
 
-// coop_puppet_init, after coop_init: the CUTSCENE handler and the co-op thread's hooks.
+// coop_puppet_init, before coop_init: the CUTSCENE, TIME and ERA handlers and the hooks on the co-op thread
+// (coop_ext.h).
 void coop_cutscene_init(void);
 // coop_puppet_present (present thread, every present): settings; 1 when the frame hook should run for this module.
 int coop_cutscene_present(void);
