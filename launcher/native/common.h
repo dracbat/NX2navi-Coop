@@ -1,5 +1,6 @@
-/* Shared by NX2navi.exe (nx2navi.c) and NX2navi-Setup.exe (setup.c): paths, small files, shortcuts and the
-   uninstall entry. Wide-character Win32 throughout, so folder names in any language work. */
+/* Shared by the launcher's own program (nx2navi.c, STUB_EXE) and the setup (setup.c, SETUP_EXE): paths, small
+   files, shortcuts and the uninstall entry, under NX2navi Co-op's names (brand.h). Wide-character Win32 throughout,
+   so folder names in any language work. */
 #pragma once
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -14,11 +15,7 @@
 #include <wchar.h>
 
 #define PATHN 1024
-#define APP_NAME L"NX2navi"
-#define UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NX2navi"
-/* The launcher window's taskbar identity (launcher/winsys.py app_id): a shortcut that carries it is the one the
-   taskbar groups and pins the window under, with the shortcut's icon. */
-#define APP_USER_MODEL_ID L"NX2navi.Launcher"
+#include "brand.h"   /* APP_NAME, APP_FOLDER, STUB_EXE, SETUP_EXE, UNINSTALL_KEY, APP_USER_MODEL_ID */
 static const PROPERTYKEY NX_PKEY_AppUserModel_ID = {
     {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
 static const IID NX_IID_IPropertyStore = {0x886d8eeb, 0x8cf2, 0x4446, {0x8d, 0x02, 0xcd, 0xba, 0x1d, 0xbd, 0xcf, 0x99}};
@@ -140,14 +137,14 @@ static inline int shortcut_path(int desktop, wchar_t *out, size_t n)
     return swprintf(out, n, L"%ls\\%ls.lnk", dir, APP_NAME) > 0;
 }
 
-/* Create (on) or remove (off) the Desktop and/or Start menu shortcut to root\NX2navi.exe. */
+/* Create (on) or remove (off) the Desktop and/or Start menu shortcut to root\STUB_EXE. */
 static inline int set_shortcut(const wchar_t *root, int desktop, int on)
 {
     wchar_t lnk[PATHN], target[PATHN];
     if (!shortcut_path(desktop, lnk, PATHN)) return 0;
     if (!on) return DeleteFileW(lnk) || GetLastError() == ERROR_FILE_NOT_FOUND;
-    swprintf(target, PATHN, L"%ls\\NX2navi.exe", root);
-    return make_shortcut(lnk, target, root, L"Play and update NX2navi");
+    swprintf(target, PATHN, L"%ls\\%ls", root, STUB_EXE);
+    return make_shortcut(lnk, target, root, L"Play and update " APP_NAME);
 }
 
 static inline void reg_str(HKEY k, const wchar_t *name, const wchar_t *value)
@@ -160,7 +157,7 @@ static inline void reg_dword(HKEY k, const wchar_t *name, DWORD value)
     RegSetValueExW(k, name, 0, REG_DWORD, (const BYTE *)&value, sizeof value);
 }
 
-/* The entry in Settings > Apps that runs "NX2navi.exe --uninstall". */
+/* The entry in Settings > Apps that runs "STUB_EXE --uninstall". */
 static inline int write_uninstall_entry(const wchar_t *root, const wchar_t *version, DWORD size_kb)
 {
     HKEY k;
@@ -171,9 +168,9 @@ static inline int write_uninstall_entry(const wchar_t *root, const wchar_t *vers
     reg_str(k, L"DisplayVersion", version);
     reg_str(k, L"Publisher", APP_NAME);
     reg_str(k, L"InstallLocation", root);
-    swprintf(buf, PATHN + 64, L"\"%ls\\NX2navi.exe\",0", root);
+    swprintf(buf, PATHN + 64, L"\"%ls\\%ls\",0", root, STUB_EXE);
     reg_str(k, L"DisplayIcon", buf);
-    swprintf(buf, PATHN + 64, L"\"%ls\\NX2navi.exe\" --uninstall", root);
+    swprintf(buf, PATHN + 64, L"\"%ls\\%ls\" --uninstall", root, STUB_EXE);
     reg_str(k, L"UninstallString", buf);
     reg_dword(k, L"NoModify", 1);
     reg_dword(k, L"NoRepair", 1);

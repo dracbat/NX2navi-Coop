@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import feed, jobs, versions
+from .. import brand, feed, jobs, versions
 
 
 def grab_gdi(x, y, w, h, path):
@@ -88,7 +88,7 @@ def ahead_of(version):
 
 
 def fake_release(version='0.3.11'):
-    m = {'format': 1, 'version': version, 'app': {'name': f'NX2navi-app-{version}.zip', 'size': 1, 'sha256': '0'}}
+    m = {'format': 1, 'version': version, 'app': {'name': f'{brand.ASSET_PREFIX}-app-{version}.zip', 'size': 1, 'sha256': '0'}}
     notes = ('- Each program module comes from the .nup package that holds it whole.\n'
              '- The PC stays awake while the game builds.\n- This launcher: one-click install, updates and play.')
     return feed.Release(m, notes)

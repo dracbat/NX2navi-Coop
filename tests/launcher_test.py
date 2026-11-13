@@ -457,7 +457,7 @@ class UninstallTest(Tmp):
     def test_plan_keeps_the_game_and_what_is_not_ours(self):
         from types import SimpleNamespace
         root = self.tmp / 'NX2navi'
-        self.tree(root, ('NX2navi.exe', 'app/current.txt', 'python.old-3/x', 'game/profile/save/1/a.sav', 'mine.txt'))
+        self.tree(root, (winsys.OWNED[0], 'app/current.txt', 'python.old-3/x', 'game/profile/save/1/a.sav', 'mine.txt'))
         layout = SimpleNamespace(root=root, toolchain=root / 'toolchain')
         gone, empty = winsys.uninstall_plan(layout)
         self.assertNotIn(root / 'game', gone)
@@ -477,7 +477,7 @@ class UninstallTest(Tmp):
     def test_script_on_windows(self):
         from types import SimpleNamespace
         root = self.tmp / 'NX2navi ÿ x'   # spaces and a character outside ASCII
-        self.tree(root, ('NX2navi.exe', 'app/1/VERSION', 'python/pythonw.exe', 'python.old-12/x', 'pydeps/z',
+        self.tree(root, (winsys.OWNED[0], 'app/1/VERSION', 'python/pythonw.exe', 'python.old-12/x', 'pydeps/z',
                          'data/launcher.json', 'toolchain/msys64/a', 'game/profile/save/1/a.sav', 'mine.txt'))
         layout = SimpleNamespace(root=root, toolchain=root / 'toolchain')
         script = winsys.uninstall_script(*winsys.uninstall_plan(layout)).replace('ping -n 3 127.0.0.1 >nul', 'echo')
@@ -4645,7 +4645,7 @@ class SteamTest(Tmp):
         items = steam.vdf_load(new)[0][2]
         self.assertEqual([k for _, k, _ in items], ['0', '1'])
         ours = {k: v for _, k, v in items[1][2]}
-        self.assertEqual(ours['AppName'], 'The Legend of Zelda Ocarina of Time')
+        self.assertEqual(ours['AppName'], 'Ocarina of Time Co-op')   # launcher/brand.py STEAM_NAME, not the official one's
         self.assertEqual(struct.unpack('<I', ours['appid'])[0], sid)
         self.assertEqual(ours['LaunchOptions'], '"C:\\NX2navi\\data\\steam_play.pyw"')
         self.assertEqual(ours['AllowOverlay'], struct.pack('<I', 1))
@@ -5107,6 +5107,42 @@ class ModsTest(Tmp):
             self.assertNotEqual(with_patch['compile'], plain['compile'])
             self.assertEqual(with_patch['shaders'], plain['shaders'])
             self.assertEqual(list(make_game.mod_code(self.game)), ['Patch/exefs/E0F3CCFAF50065AE.ips'])
+
+
+
+# ---------------------------------------------------------------- NX2navi Co-op's identity
+
+class BrandTest(unittest.TestCase):
+    """NX2navi Co-op's names (launcher/brand.py) are the ones the setup and the launcher's own program use
+    (launcher/native/brand.h), the launcher's modules take them, and none is the official NX2navi's: the two install,
+    update and run side by side without meeting."""
+
+    def test_the_names_agree_and_differ_from_the_official_ones(self):
+        import re
+        from launcher import brand, steam
+        h = (ROOT / 'launcher' / 'native' / 'brand.h').read_text(encoding='utf-8')
+        bs = chr(92)   # a backslash: brand.h writes each one twice inside its C strings
+        defs = {k: v.replace(bs * 2, bs) for k, v in re.findall(r'#define (\w+) L"([^"]*)"', h)}
+        self.assertEqual(defs, {'APP_NAME': brand.NAME, 'APP_FOLDER': brand.FOLDER, 'STUB_EXE': brand.STUB,
+                                'SETUP_EXE': brand.SETUP + '.exe', 'UNINSTALL_KEY': brand.UNINSTALL_KEY,
+                                'APP_USER_MODEL_ID': brand.APP_ID})
+        official = {'NX2navi', 'NX2navi.exe', 'NX2navi-Setup', 'NX2navi.Launcher', 'NX2navi-update.json',
+                    'tangerineturtle1/NX2navi', 'The Legend of Zelda Ocarina of Time', 'shortcuts.vdf.nx2navi-backup',
+                    bs.join(('Software', 'Microsoft', 'Windows', 'CurrentVersion', 'Uninstall', 'NX2navi'))}
+        ours = {brand.NAME, brand.FOLDER, brand.STUB, brand.SETUP, brand.APP_ID, brand.MANIFEST, brand.FEED_REPO,
+                brand.STEAM_NAME, brand.STEAM_BACKUP, brand.UNINSTALL_KEY}
+        self.assertFalse(ours & official)
+        self.assertEqual((feed.MANIFEST, feed.DEFAULT['repo'], winsys.UNINSTALL_KEY, winsys.OWNED[0], steam.NAME),
+                         (brand.MANIFEST, brand.FEED_REPO, brand.UNINSTALL_KEY, brand.STUB, brand.STEAM_NAME))
+        self.assertEqual(Layout(root=Path('x')).stub.name, brand.STUB)
+
+    def test_the_version_has_four_numbers_and_is_a_release_newer_than_its_base(self):
+        """VERSION is <upstream base>.<build>: newer than the upstream release it is made from, and a release, not a
+        pre-release (a "-tag" would sort before its base and reach only the Preview channel)."""
+        v = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+        self.assertRegex(v, r'^\d+\.\d+\.\d+\.\d+$')
+        self.assertTrue(versions.newer(v, v.rsplit('.', 1)[0]))
+        self.assertEqual(versions.parse(v)[1], (1,))
 
 
 if __name__ == '__main__':

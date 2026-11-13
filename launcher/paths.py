@@ -1,8 +1,9 @@
 """Where the launcher keeps everything.
 
-An installed launcher (NX2navi-Setup.exe puts it in %LOCALAPPDATA%\\Programs\\NX2navi) is one folder:
+An installed launcher (NX2navi-Coop-Setup.exe puts it in %LOCALAPPDATA%\\Programs\\NX2navi-Coop, launcher/brand.py)
+is one folder:
 
-    NX2navi.exe              launcher/native/nx2navi.c: starts python\\pythonw.exe on app\\<current>\\launcher\\start.pyw
+    NX2navi-Coop.exe         launcher/native/nx2navi.c: starts python\\pythonw.exe on app\\<current>\\launcher\\start.pyw
     python/                  the embeddable Python with tkinter, numpy, lz4 and zstandard (tools/make_launcher.py)
     app/current.txt          the version the stub starts; app/previous.txt the one before it, kept for a rollback
     app/<version>/           one release: launcher/, runtime/, recomp/, tools/, bin/, VERSION, toolchain.lock.json
@@ -18,6 +19,8 @@ to build/launcher-dev/, which git ignores.
 import os
 import sys
 from pathlib import Path
+
+from . import brand
 
 APP = Path(__file__).resolve().parents[1]
 
@@ -65,7 +68,7 @@ class Layout:
             self.root = self.app / 'build' / 'launcher-dev'
         self.apps = self.root / 'app'
         self.python = self.root / 'python'
-        self.stub = self.root / 'NX2navi.exe'
+        self.stub = self.root / brand.STUB
         self.pydeps = self.root / 'pydeps'
         self.data = self.root / 'data'
         self.logs = self.data / 'logs'
@@ -74,7 +77,7 @@ class Layout:
         self.settings = self.data / 'launcher.json'
         tool_root = self.root
         if not ansi_safe(tool_root):
-            tool_root = Path(os.environ.get('SystemDrive', 'C:') + '\\') / 'NX2navi'
+            tool_root = Path(os.environ.get('SystemDrive', 'C:') + '\\') / brand.FOLDER
         self.toolchain = tool_root / 'toolchain'
         self.msys_root = self.toolchain / 'msys64'
         self.msys = self.msys_root / 'ucrt64'
@@ -112,7 +115,7 @@ class Layout:
                 except OSError:
                     continue
                 if best is None or free > best[0]:
-                    best = (free, drive / 'Games' / 'NX2navi')
+                    best = (free, drive / 'Games' / brand.FOLDER)
         return best[1] if best else here
 
     def python_for_builds(self):

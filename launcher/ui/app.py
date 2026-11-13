@@ -37,7 +37,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog
 
-from .. import NAME, build, feed, gameini, gamefiles, jobs, mods, saves, steam, versions, winsys
+from .. import NAME, brand, build, feed, gameini, gamefiles, jobs, mods, saves, steam, versions, winsys
 from ..context import Context
 from . import art, picture, sound
 
@@ -930,8 +930,9 @@ class App:
         if not path:
             return
         p = Path(path)
-        if p.exists() and any(p.iterdir()) and not (p / 'build-cache').is_dir() and p.name.lower() != 'nx2navi':
-            p = p / 'NX2navi'
+        if (p.exists() and any(p.iterdir()) and not (p / 'build-cache').is_dir()
+                and p.name.lower() != brand.FOLDER.lower()):
+            p = p / brand.FOLDER
         self.settings['game_dir'] = str(p)
         self.settings.save()
         self.show(self.screen, self.focus)
@@ -2661,7 +2662,7 @@ class App:
 
 
 def parse_args(argv):
-    ap = argparse.ArgumentParser(prog='NX2navi')
+    ap = argparse.ArgumentParser(prog=brand.FOLDER)
     ap.add_argument('--from', dest='source', help='a folder to look in for the dump first (the setup\'s folder)')
     ap.add_argument('--continue-update', metavar='OLD', help='finish an update after the restart (from OLD)')
     ap.add_argument('--rolled-back', metavar='VERSION', help='the stub went back from VERSION')
@@ -2750,7 +2751,7 @@ def main(argv=None):
         if lock is None:
             ctx.log('another launcher is running')
             return 0
-    root = tk.Tk(className='NX2navi')
+    root = tk.Tk(className='NX2naviCoop')   # launcher/brand.py FOLDER without its hyphen, as a Tk class name
     app = App(root, ctx, a)
     if a.selftest:
         from .selftest import run

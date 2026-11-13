@@ -1,16 +1,16 @@
 """Where updates come from.
 
-Every release carries NX2navi-update.json (tools/make_launcher.py writes it):
+Every release carries NX2navi-Coop-update.json (launcher/brand.py MANIFEST; tools/make_launcher.py writes it):
 
-    {"format": 1, "version": "0.3.11", "build": "0.3.11+abc1234", "notes": "...",
-     "app":     {"name": "NX2navi-app-0.3.11.zip", "size": n, "sha256": "..."},
-     "runtime": {"id": "py3.14.9-1", "name": "NX2navi-runtime-py3.14.9-1.zip", "size": n, "sha256": "..."},
+    {"format": 1, "version": "0.9.2.1", "build": "0.9.2.1+abc1234", "notes": "...",
+     "app":     {"name": "NX2navi-Coop-app-0.9.2.1.zip", "size": n, "sha256": "..."},
+     "runtime": {"id": "py3.14.9-1", "name": "NX2navi-Coop-runtime-py3.14.9-1.zip", "size": n, "sha256": "..."},
      "toolchain": "<lock digest>"}
 
 The feed (app/<version>/feed.json, or the player's override in settings) is either
     {"type": "github", "repo": "owner/name"}   the newest GitHub release (or pre-release, on the preview channel)
                                                   that has the manifest; a token reads a private repository
-    {"type": "url", "url": "https://.../NX2navi-update.json"}   one manifest; its files sit beside it
+    {"type": "url", "url": "https://.../NX2navi-Coop-update.json"}   one manifest; its files sit beside it
 """
 import json
 import re
@@ -18,10 +18,10 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import net, versions
+from . import brand, net, versions
 
-MANIFEST = 'NX2navi-update.json'
-DEFAULT = {'type': 'github', 'repo': 'tangerineturtle1/NX2navi'}
+MANIFEST = brand.MANIFEST
+DEFAULT = {'type': 'github', 'repo': brand.FEED_REPO}
 GITHUB_API = 'https://api.github.com'
 
 

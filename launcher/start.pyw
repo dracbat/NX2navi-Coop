@@ -1,4 +1,4 @@
-"""What NX2navi.exe runs: python\\pythonw.exe app\\<version>\\launcher\\start.pyw [arguments].
+"""What NX2navi-Coop.exe runs: python\\pythonw.exe app\\<version>\\launcher\\start.pyw [arguments].
 
 The embeddable Python puts only its ._pth entries on sys.path, so the release folder (the parent of launcher/) goes
 first here. A failure before the window is up is written to data/logs/crash.log and ends the process with exit code
@@ -76,7 +76,9 @@ def crash(text, box=True):
         return
     try:
         import ctypes
-        ctypes.windll.user32.MessageBoxW(None, 'NX2navi could not start.\n\n' + text[-1500:], 'NX2navi', 0x10)
+        # launcher/brand.py NAME, written out: this runs when the launcher's own modules did not load
+        ctypes.windll.user32.MessageBoxW(None, 'NX2navi Co-op could not start.\n\n' + text[-1500:], 'NX2navi Co-op',
+                                         0x10)
     except Exception:
         print(text, file=sys.stderr)
 

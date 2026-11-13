@@ -26,7 +26,9 @@ import time
 import zlib
 from pathlib import Path
 
-NAME = 'The Legend of Zelda Ocarina of Time'
+from . import brand
+
+NAME = brand.STEAM_NAME   # NX2navi Co-op's own shortcut, beside the official one (launcher/brand.py)
 PLAY_SCRIPT = 'steam_play.pyw'
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 STEAM64_BASE = 76561197960265728
@@ -316,8 +318,8 @@ def add(layout, game_dir, dump='', log=print, restart=True):
             except FileNotFoundError:
                 old = b''
             new, got = add_shortcut(old, exe, start, options, str(icon))
-            if old and not (cfg / 'shortcuts.vdf.nx2navi-backup').exists():
-                shutil.copyfile(vdf, cfg / 'shortcuts.vdf.nx2navi-backup')
+            if old and not (cfg / brand.STEAM_BACKUP).exists():
+                shutil.copyfile(vdf, cfg / brand.STEAM_BACKUP)
             write_atomic(vdf, new)
             log(f'steam: shortcut {got} in {vdf}')
     finally:   # Steam comes back also when a file could not be written

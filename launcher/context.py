@@ -4,6 +4,7 @@ import os
 import threading
 import time
 
+from . import NAME
 from .paths import Layout
 from .settings import Settings
 
@@ -27,7 +28,7 @@ class Context:
             self._file = open(path, 'a', encoding='utf-8', errors='replace')
         except OSError:
             self._file = None
-        self.log(f'--- NX2navi launcher {self.version} ({"checkout" if self.layout.dev else "release"}) in '
+        self.log(f'--- {NAME} launcher {self.version} ({"checkout" if self.layout.dev else "release"}) in '
                  f'{self.layout.root}')
         from .toolchain import zstd_missing
         self.zstd_missing = zstd_missing(self.layout)
