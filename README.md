@@ -45,9 +45,9 @@ room's secret, your game or your save, and keeps nothing on disk.
 4. Shared by everyone: story progress (events, chests, doors, switches, bosses), items, songs and quest items; small
    keys go into one pool per dungeon. Your own: rupees and ammunition, always, and where you are, your hearts and your
    magic.
-5. Seeing each other is being tested: with `coop_puppets = 1` under `[coop]` in `nx2navi.ini`, the other players of
-   your room are shown in your world as Links of their own. The launcher makes the files for them from your own game
-   when it builds it (*Make the Co-op Players*).
+5. The other players of your room are shown in your world as Links of their own (`coop_puppets = 0` under `[coop]`
+   in `nx2navi.ini` turns that off). The launcher makes the files for them from your own game when it builds it
+   (*Make the Co-op Players*).
 
 [docs/coop.md](docs/coop.md) explains rooms, the rules and what joining a room means for your save in full.
 

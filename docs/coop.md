@@ -13,8 +13,8 @@ no menu row sets it. Everything below is as it is with the tab shown.
 
 **NX2navi Co-op** shows the tab by default (`coop_beta = 1`), keeps every player's rupees and ammunition their own
 whatever the settings or a room's rules ask for (`coop_wallets = rules` gives the rules their say again;
-`runtime/coop_state.c` coop_rules_normalize), and shows the other players as Links of their own while
-`coop_puppets = 1` (`runtime/coop_puppet.c`; still in testing, off by default).
+`runtime/coop_state.c` coop_rules_normalize), and shows the other players as Links of their own
+(`runtime/coop_puppet.c`; `coop_puppets = 0` turns that off).
 
 ## What joining a room means for your save
 

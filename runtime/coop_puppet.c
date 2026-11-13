@@ -25,7 +25,7 @@
 //
 // Status (game 1.1.1, run-checked): a pot and the puppet (CoopPuppet_Child / _Adult, tools/make_puppet_mod.py) are made,
 // taken and drawn where they were asked for, the puppet plays Link's nodes and follows a pose, and two games in one
-// room each make the other's Link as a puppet. The other players' puppets stay off unless NX2NAVI_COOP_PUPPETS is set.
+// room each make the other's Link as a puppet. The other players' puppets show unless NX2NAVI_COOP_PUPPETS is 0.
 // Arms: the puppet's arms no longer stay in the bind pose (A-pose): its AS slot 1 (Upper) plays
 // Link's slot-0 node at slot 0's frame while Link's own slot 1 is empty (NX2NAVI_COOP_PUPPET_ARMS, default upper;
 // they hang and swing as Link's). Gear: the shadow puppet is
@@ -2460,8 +2460,8 @@ void coop_puppet_present(void) {
         P.cfg_seen = v;
         const char *t = cfg_get("NX2NAVI_COOP_PUPPET_TEST");
         P.test = !t ? 0 : !strncmp(t, "spike", 5) ? 1 : !strncmp(t, "shadow", 6) ? 2 : 0;
-        const char *r = cfg_get("NX2NAVI_COOP_PUPPETS");   // no row in the settings table: "" or unset is off
-        P.remote = r && *r && strcmp(r, "0") != 0;
+        const char *r = cfg_get("NX2NAVI_COOP_PUPPETS");   // no row in the settings table: on unless "0"
+        P.remote = !(r && !strcmp(r, "0"));
         const char *bv = cfg_get("NX2NAVI_COOP_PUPPET_BB");   // test: off unless set (and not "0")
         P.bb_copy = bv && *bv && strcmp(bv, "0") != 0;
         const char *am = cfg_get("NX2NAVI_COOP_PUPPET_ARMS");   // test: upper (default), upper3, all, follow, 0
