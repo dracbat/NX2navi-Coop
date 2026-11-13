@@ -81,7 +81,7 @@ float dbg_speed_factor(void) { return speed_factor; }
 void dbg_speed_set(float factor) { speed_factor = factor >= 0.05f && factor <= 8.0f ? factor : 1.0f; }
 
 // ---- what the menu asks for, done by dbg_tick
-enum { Q_FLAG, Q_WRITE, Q_MAX = 256, FREEZE_MAX = 64 };
+enum { Q_FLAG, Q_WRITE, Q_SMALL_KEYS, Q_MAX = 256, FREEZE_MAX = 64 };
 typedef struct { int kind; uint32_t hash; uint64_t addr, value; int size; } Req;
 static PlatMutex q_lock = PLAT_MUTEX_INIT;
 static Req q[Q_MAX];
@@ -1110,11 +1110,36 @@ void dbg_pad(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *
     *buttons &= ~(zl | zr | l | r);
 }
 
+// Small keys picked up (n > 0) or used (n < 0) in the dungeon Link is in, through the game's own routine: main+0x3283160
+// on the dungeon-info object, which the AI nodes that give a key and that open a locked door reach the same way (the
+// object at [[main+0x4c7e178]], main+0xb2af20, then main+0xb2afc0). It adds to the dungeon's count of keys held (and, for
+// keys picked up, to the count of keys ever picked up there), and refuses a use that would go below 0; outside a dungeon
+// it changes nothing. Game thread, for test runs.
+static void small_keys(Cpu *c, int n) {
+    char area[64] = "", flag[128];
+    text_get("Sequence_CurrentBanc", area);
+    // the keys held before, from the area's dungeon counter (an Int of the game data, kind 2), when the area has one
+    snprintf(flag, sizeof flag, "DungeonInfo.%s.SmallKeyNum", area);
+    uint64_t e = area[0] ? gmd_entry(2, 0x28, hash_of(flag)) : 0;
+    int32_t held = 0;
+    char before[48] = "";
+    if (e && rd(e + 0x1c, &held, 4)) snprintf(before, sizeof before, " (%d held before)", held);
+    uint64_t slot = rd_ptr(MOD_MAIN_BASE + 0x4c7e178), sys = slot ? rd_ptr(slot) : 0;
+    uint64_t stage = sys ? rt_call(c, MOD_MAIN_BASE + 0xb2af20, 1, sys) : 0;
+    uint64_t info = stage ? rt_call(c, MOD_MAIN_BASE + 0xb2afc0, 1, stage) : 0;
+    if (!info) {
+        rt_log("debug: smallkey %+d in '%s': the game has no dungeon-info object now; nothing done", n, area);
+        return;
+    }
+    rt_call(c, MOD_MAIN_BASE + 0x3283160, 2, info, (uint64_t)(uint32_t)n);
+    rt_log("debug: smallkey %+d in '%s' through the game's own routine%s", n, area, before);
+}
+
 // ---- NX2NAVI_DBG_TEST="<tick>:flag <hash hex> <0|1>;<tick>:speed <factor>;<tick>:find <value> <size>;
 // <tick>:next <mode> <value>;<tick>:setfirst <value>;<tick>:holdfirst <value>;<tick>:show [<hash hex>];
 // <tick>:warp <area> [<start position>];<tick>:event <name>;<tick>:text <game data text's name>;
 // <tick>:freecam <0|1> <sticks 0|1> <speed>;<tick>:camavoid <0|1>;<tick>:camgo <dx> <dy> <dz> [<yaw> <pitch>];
-// <tick>:camreset;<tick>:campos":
+// <tick>:camreset;<tick>:campos;<tick>:smallkey <n>":
 // the menu's requests without the menu, for test runs. Ticks count the game's pad reads from the player's first appearance.
 static void test_script(uint64_t tick) {
     static char buf[2048];
@@ -1133,8 +1158,11 @@ static void test_script(uint64_t tick) {
         unsigned hash = 0, on = 0, size = 4;
         unsigned long long value = 0;
         float f = 0;
+        int keys = 0;
         if (sscanf(colon + 1, "flag %x %u", &hash, &on) == 2) {
             dbg_flag_set(hash, (int)on);
+        } else if (sscanf(colon + 1, "smallkey %d", &keys) == 1) {
+            ask((Req){Q_SMALL_KEYS, 0, 0, (uint64_t)(int64_t)keys, 0});
         } else if (sscanf(colon + 1, "speed %f", &f) == 1) {
             dbg_speed_set(f);
         } else if (!strncmp(colon + 1, "campos", 6)) {
@@ -1265,6 +1293,8 @@ void dbg_tick(Cpu *c) {
             rt_call(c, MOD_MAIN_BASE + 0x682b20, 3, m, todo[i].value, (uint64_t)todo[i].hash);
             stat_flags++;
             rt_log("debug: flag %08x set to %s", todo[i].hash, todo[i].value ? "on" : "off");   // what a tester changed, for the log
+        } else if (todo[i].kind == Q_SMALL_KEYS) {
+            small_keys(c, (int)(int64_t)todo[i].value);
         } else if (todo[i].size == 1 || todo[i].size == 2 || todo[i].size == 4) {
             if (wr(todo[i].addr, &todo[i].value, (size_t)todo[i].size)) stat_writes++;
             else stat_refused++;
