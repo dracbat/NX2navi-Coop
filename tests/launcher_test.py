@@ -4934,7 +4934,7 @@ class ForcedCheckTest(Tmp):
             a.check_started = time.time() - 10
             App.check_now(a, force=True)
             check.assert_not_called()
-            self.assertEqual(a.message, 'NX2navi looked for updates less than a minute ago.')
+            self.assertEqual(a.message, f'{app.NAME} looked for updates less than a minute ago.')
             a.show.assert_called_once_with('home', a.focus)
             a.check_started = time.time() - app.FORCED_CHECK_PAUSE - 1
             App.check_now(a, force=True)

@@ -7,7 +7,7 @@ import threading
 import time
 import traceback
 
-from . import build, feed, gamefiles, net, toolchain, updater, versions, winsys
+from . import NAME, build, feed, gamefiles, net, toolchain, updater, versions, winsys
 
 RECHECK = 3600   # seconds between update checks while the launcher stays open, hidden during play included
 
@@ -44,7 +44,7 @@ STEPS = {
     'scan': ('Check the Game Files', 'Decompressing every game file once to find damage, and standing in for damaged '
                                      'textures so the world still loads.'),
     'ready': ('Ready to Play', 'The game is built.'),
-    'download': ('Download {ver}', 'Downloading the new version of NX2navi.'),
+    'download': ('Download {ver}', f'Downloading the new version of {NAME}.'),
     'verify': ('Verify the Download', 'Checking the download against its checksum.'),
     'swap': ('Swap In the New Build', 'Linking the new build. It replaces the old one only once it is complete.'),
 }
