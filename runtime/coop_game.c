@@ -218,6 +218,8 @@ static struct {
 // values (they wait in the flags' wanted values); running is the gate of the last present; save_serial moves whenever
 // the title screen comes back (another save may be played next).
 static volatile int32_t hold, running, save_serial;
+// For the small keys (coop_keys.c): moves at each load the gate sees and with save_serial.
+static volatile int32_t load_serial;
 
 static int rd_ok(uint64_t a, uint64_t n) { return a >= 0x1000 && mem_readable(a, n); }
 
@@ -419,6 +421,7 @@ void coop_game_init(void) {
 void coop_game_hold(int on) { __atomic_store_n(&hold, on != 0, __ATOMIC_RELEASE); }
 int coop_game_running(void) { return __atomic_load_n(&running, __ATOMIC_ACQUIRE); }
 unsigned coop_game_save_serial(void) { return (unsigned)__atomic_load_n(&save_serial, __ATOMIC_ACQUIRE); }
+unsigned coop_game_load_serial(void) { return (unsigned)__atomic_load_n(&load_serial, __ATOMIC_ACQUIRE); }
 int coop_game_backed_up(void) { return __atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE); }
 
 void coop_game_rom_open(const char *path) {
@@ -542,6 +545,7 @@ static int gate(uint64_t mgr, float pos[3]) {
         unbind();
         G.loaded = 0;
         __atomic_add_fetch(&save_serial, 1, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
     }
     uint32_t clock = LD32(G.clock_entry + I_CURRENT);
     int loading = G.loading_entry && LD8(G.loading_entry + B_CURRENT);
@@ -557,11 +561,11 @@ static int gate(uint64_t mgr, float pos[3]) {
         // tick after one
         int tick = clock > G.clock && clock - G.clock <= 5;
         if (!tick && teleport) rt_log("coop: the game's clock jumped at a teleport: the same save is played on");
-        if (!tick && !teleport) unbind(), G.loaded = 1;
+        if (!tick && !teleport) unbind(), G.loaded = 1, __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
         G.clock = clock;
         G.clock_at = tick ? now : 0;
     }
-    if (loading && !teleport) unbind(), G.loaded = 1;
+    if (loading && !teleport) unbind(), G.loaded = 1, __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
     G.player = player_in_world(pos);
     G.gate = G.loaded && G.player && !loading && !moving && G.clock_at && now - G.clock_at < CLOCK_MS;
     __atomic_store_n(&running, G.gate, __ATOMIC_RELEASE);

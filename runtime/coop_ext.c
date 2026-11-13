@@ -36,6 +36,8 @@ static const struct { uint8_t kind; uint16_t per_s, burst; } rates[] = {
     {COOP_K_CUTSCENE, 4, 8}, {COOP_K_TIME, 4, 8}, {COOP_K_ERA, 4, 8},   // a beat every 2 or 3 s, and the changes
     {COOP_K_PUPPET, 30, 30},  // 15 a second
     {COOP_K_GEAR, 4, 8}, {COOP_K_PICK, 4, 8}, {COOP_K_COLOURS, 4, 8},   // at a change and when a player comes
+    {COOP_K_KEYS, 4, 8},      // at a change, when a player comes and every 10 s
+    {COOP_K_KEY, 10, 20},     // a key picked up or used, and the changes not acked yet every 3 s (16 at most)
 };
 
 typedef struct {

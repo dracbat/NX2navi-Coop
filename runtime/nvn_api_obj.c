@@ -13,6 +13,7 @@
 #include "gfx.h"
 #include "cfg.h"
 #include "coop_game.h"
+#include "coop_keys.h"
 #include "coop_puppet.h"
 #include "host.h"
 #include "nvn_api.h"
@@ -876,6 +877,7 @@ NVN_API(nvnQueuePresentTexture) {
     movie_tick(c);   // ov_movie.c: hand over decoded movie frames that are due; needs the core, so before the wait
     res_present(c);  // resolution.c: a DLSS mode change sets the game's render size again, between frames
     coop_present(c); // coop_game.c: co-op reads Link and the game's flags and sets the flags the room has, between frames
+    coop_keys_present(c); // coop_keys.c: the small keys, the room's counts set, and the keys picked up or used here sent
     coop_puppet_present(); // coop_puppet.c: the other players' puppets switch their frame hook on when they have work
     wide_present();  // widescreen.c: Ocarina's DLSS render scale
     NVN_BLOCKING();

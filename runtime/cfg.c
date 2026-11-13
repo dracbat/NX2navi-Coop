@@ -85,7 +85,7 @@ static const char *const known[] = {
     // sets them logs no unknown key. COOP was that co-op's switch: the new one's is COOP_STEAM, so that a "coop = 1"
     // left in a file from then turns nothing on
     "COOP", "COOP_BETA", "COOP_NAME", "COOP_SERVER", "COOP_PORT", "COOP_ROOM", "COOP_AUTO", "COOP_DROP",
-    "COOP_PROGRESS", "COOP_ITEMS", "COOP_SONGS", "COOP_QUEST", "COOP_KEYS", "COOP_RUPEES", "COOP_AMMO",
+    "COOP_PROGRESS", "COOP_ITEMS", "COOP_SONGS", "COOP_QUEST", "COOP_RUPEES", "COOP_AMMO",
     "COOP_TEST_SET", "COOP_ACCEPT", "COOP_REMOVE", "COOP_RESET_POOLS",
     // NX2navi Co-op's own: the other players' Links, colours and name tags, kills, cutscenes, dialog, the era; no rows
     "COOP_PUPPETS", "COOP_PUPPET_HOOK",   // the other players' Links (coop_puppet.c), the patch set's switch
@@ -99,6 +99,7 @@ static const char *const known[] = {
     "COOP_CUTSCENES", "COOP_CUTSCENE_BOOT", "COOP_CUTSCENE_RETURN", "COOP_CUTSCENE_BOSSES", "COOP_CUTSCENE_HIDE",   // cutscenes together,
     "COOP_CUTSCENE_TRACE", "COOP_CUTSCENE_TEST", "COOP_DIALOG", "COOP_TIME", "COOP_TIME_PROBE",   // dialog per player and the time of day (coop_cutscene.c, coop_game.c)
     "COOP_ERA",   // the era: follow, scene, shared or own (coop_cutscene.c, coop_game.c)
+    "COOP_KEYS",  // the room's small keys: pool or own (coop_keys.c); a row on the Co-op tab
 };
 
 // The nx2navi.ini section a key cfg_set may write goes to when the file lacks it (nx2navi.ini.example's sections).
@@ -125,6 +126,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"DISCORD_RPC", "discord"}, {"DISCORD_APP_ID", "discord"}, {"DISCORD_IMAGE", "discord"},
     {"COOP_STEAM", "coop"}, {"COOP_SHARE", "coop"}, {"COOP_NAMES", "coop"}, {"COOP_CHAT", "coop"}, {"COOP_COLOUR", "coop"},
+    {"COOP_KEYS", "coop"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
     {"MODS_DIR", "mods"}, {"MODS_ORDER", "mods"}, {"MODS_DISABLED", "mods"}, {"MODS_REBUILD", "mods"},
@@ -262,6 +264,9 @@ static const CfgMeta metas[] = {
     {"COOP_CHAT", "1", "0|1", LIVE},
     // COOP_COLOUR: the colour this player picks for their Link in a room (coop_colours.c); auto: the first free one
     {"COOP_COLOUR", "auto", "auto|green|red|blue|purple", LIVE},
+    // COOP_KEYS: pool, one count of small keys per dungeon for the whole room, kept by its host (coop_keys.c; with
+    // COOP_SHARE on); own, each player's keys their own
+    {"COOP_KEYS", "pool", "pool|own", LIVE},
     // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},
     {"REPLAY_WORKERS", "0", "0..16", RESTART}, {"REPLAY_PIPE", "0", "0..4", RESTART},
