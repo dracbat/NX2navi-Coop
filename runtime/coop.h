@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 enum {
-    COOP_PROTOCOL = 1,       // games of another number do not play together
+    COOP_PROTOCOL = 2,       // games of another number do not play together (2: the modules' kinds, coop_ext.h)
     COOP_PLAYERS = 4,
     COOP_NAME_CAP = STEAM_NAME_CAP,
     COOP_SCENE_CAP = 48,
@@ -24,6 +24,7 @@ enum {
     COOP_CHAT_LINES = 8,
     COOP_FRIENDS = 64,
     COOP_GAME_KIND = 16,     // message kinds from here on belong to the game layer (coop_game.c)
+    COOP_EXT_KIND = 0x40,    // the game layer's end below this: from here on they are the co-op modules' (coop_ext.h)
     COOP_MESSAGE_MAX = STEAM_MESSAGE_MAX - 1,   // bytes of a message after its kind
 };
 
@@ -118,6 +119,10 @@ int coop_post(uint64_t to, uint8_t kind, const void *data, size_t n, int reliabl
 void coop_game_message(uint64_t from, uint8_t kind, const uint8_t *data, size_t n);
 void coop_game_joined(uint64_t id);
 void coop_game_room(int in_room);
+// The co-op modules (coop_ext.c), on the co-op thread: a message of their kinds from a player of the room, and every
+// step of the thread.
+void coop_ext_message(uint64_t from, uint8_t kind, const uint8_t *data, size_t n);
+void coop_ext_step(uint64_t now_ms);
 
 #ifdef __cplusplus
 }

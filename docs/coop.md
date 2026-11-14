@@ -105,10 +105,16 @@ left; this game is the host now`, `coop: left the room`, `coop: the save as it w
 `coop: a save is played: N flags and counts can be shared`, `coop: took N values of progress from the room`, `coop: N
 values from the room were not ones this game shares; dropped`.
 
+The co-op modules say what they do with their settings at the start and when a setting changes, and then what
+happens: `coop: ext:` (the room's players by seat: `seat 2 'name' is in the room`). A player of the room is named by
+seat and Steam name, never by id. Lines about what another player sent are a few a second for each player at most, and
+a line says how many were left out.
+
 ## How it works
 
 For a reviewer. The code is `runtime/steam.c` (the Steam library), `runtime/coop.c` (the room), `runtime/coop_game.c`
-(the game side) and `runtime/ui/coop_page.cpp` (the menu's tab and the names over the game).
+(the game side), `runtime/ui/coop_page.cpp` (the menu's tab and the names over the game) and `runtime/coop_ext.c` (the
+glue between the room and the modules that share more than progress).
 
 **The Steam library.** `steam.c` loads `steam_api64.dll` from beside the exe at run time and calls the plain C
 functions it exports; it declares them itself, and nothing of the Steamworks SDK is in this repository. It sets
@@ -119,13 +125,20 @@ calls is refused as too old.
 **The room.** A room is a friends-only Steam lobby that carries the note `nx2navi = 1`; a lobby without it belongs to
 some other program that uses the test app and is left at once. The lobby's owner is the host. A game that entered the
 lobby says HELLO to the host with its protocol number and game build; the host answers WELCOME or REFUSED and sends
-everyone the list of the players it let in. Every game takes positions, chat and progress only from the players on
-the host's list, and only a lobby member's session is accepted, so a stranger on Steam, a player the host removed and
-a game of another version reach nobody.
+everyone the list of the players it let in. Every game takes positions, chat, progress and the modules' messages only
+from the players on the host's list, and only a lobby member's session is accepted, so a stranger on Steam, a player
+the host removed and a game of another version reach nobody. The protocol number is one more whenever a message
+changes, so that games that would not understand each other are refused as another version.
 
 **Messages** go through Steam's networking messages (datagrams to a Steam id): positions unreliable, twenty a second
 while Link is in the world; everything else reliable. Steam vouches for the sender's id and encrypts. Each message is
-one kind byte and a body whose length is checked before it is read; `coop.c`'s header comment lists them.
+one kind byte and a body whose length is checked before it is read; `coop.c`'s header comment lists them. Kinds from
+0x40 on are the co-op modules' (`runtime/coop_ext_wire.h` has their bytes and codecs): the Link's pose and what it plays
+(PUPPET, unreliable, about 15 a second while other players are in the room) and its gear (GEAR, when it changes and
+when a player comes), the colour each player picks (PICK) and the host's colours (COLOURS), kills and hits (KILL,
+DAMAGE), cutscenes (CUTSCENE), the time of day (TIME), the era (ERA) and the small keys (KEYS from the host, KEY from
+the others), all of them reliable but PUPPET. `coop_ext.c` gives the players of the room seats 1 to 4 for as long as
+they stay and hands each message to its part, at most so many a second of each kind from each player.
 
 **Progress.** The game keeps its progress as flags in a database keyed by 32-bit hashes of flag names
 (`coop_game.c`'s header comment has the layout). Between two frames the runtime reads the flags that changed and sends
@@ -151,6 +164,15 @@ ever rises: two games that set the same flag agree whatever the order.
   stands two metres beside the game's Link so that its name shows there, says a chat line, asks for the game's
   progress and, with `--flags`, sends flags as set. It ends with `peer: ok` when it was let in, saw the game's Link
   in the world and got its progress. Run it on a copy of a profile: the flags it sends reach that save.
+- `python tests/coop_ext_peer.py --host <port>` is the same second player, and also speaks the modules' messages: it
+  stands two metres beside the game's Link, says a chat line and asks for the game's progress, and its modes send what
+  another player would: flags (`--flags`), its own Link from the game's pose and gear (`--mirror`), a colour (`--pick`),
+  a kill of an enemy the game hit (`--kill-after-damage`), a cutscene (`--cut`), a time of day (`--time`), an era
+  (`--era`) and small keys (`--key`); its docstring lists them. It ends with `peer: ok` or `peer: FAILED` for what its
+  modes check. Run it on a copy of a profile: what it sends reaches that save.
+- `ocarina --probe-coop-ext` checks the codecs of the co-op modules' messages against the byte vectors of
+  `tests/coop_ext_vectors.txt` (which `tests/coop_ext_peer.py --write-vectors` writes from a codec of its own), their
+  refusals, every shorter and longer copy of each message, and random bytes. Needs no window, GPU or game files.
 - `NX2NAVI_MENU_TEST_SET=<frame>:COOP_DO=create | leave | join:<room id> | chat:<text> | page:join | page:invite |
   page:chat | page:leave` (environment only) does what the Co-op tab's row or window does.
 - `ocarina --probe-services` checks, among the rest, that every text of the tab has its four languages.
