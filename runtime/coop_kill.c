@@ -6,7 +6,7 @@
 // pending life request (MaxLife on the kill override). The game then records the total (+0x1cb0), clamps it at 0 and
 // takes it from Life with a CAS, clamped to [0, MaxLife]; Life 0 takes the death branch (a revive check, then
 // requestDeath(LifeDepleted) and the enemy's own death: its animation, its drop roll, its respawn flag). The patch set
-// coop_life (recomp/patches-v111.txt) turns the add into a call of life_host (patch page +0xf40), which writes
+// coop_life (recomp/patches-v111.txt) turns the add into a call of life_host (patch page +0x810), which writes
 // w9 = hit' + rest and changes nothing else. The hit is w9 plus term 2 (comp+0x228: the sword's hits and the bites on
 // Link land there); rest is what is left of w10, a pending life request's part or the kill override:
 //   difficulty    hit' is the hit divided by the health factor for an Enemy_* actor and multiplied by the damage factor
@@ -114,7 +114,7 @@ static int window_take(Window *w, uint32_t gen, uint32_t epoch, uint32_t seq) { 
 #ifdef RT_PATCH_PAGE
 
 #define MAIN 0x7000000000ull
-#define HOST_LIFE (RT_PATCH_PAGE + 0xf40)   // the set coop_life: main+0x49dcb0 add w9, w10, w9 -> bl here
+#define HOST_LIFE (RT_PATCH_PAGE + 0x810)   // the set coop_life: main+0x49dcb0 add w9, w10, w9 -> bl here
 #define PLAYER_HOLDER (MAIN + 0x4e371d0)    // *: +0x480 Link's actor
 
 // the life component

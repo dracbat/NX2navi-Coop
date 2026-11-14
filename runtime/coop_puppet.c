@@ -2,7 +2,7 @@
 //
 // The hook. The framework's per-frame update (main+0x6e6be0) steps the time manager (main+0x3b4e300) before it updates
 // the scene. The patch set "coop_puppet" (recomp/patches-v111.txt) turns that bl into a call of puppet_frame on the patch
-// page (+0xf00), which makes the call itself and then does the puppets' work on the game's update thread, between two
+// page (+0x800), which makes the call itself and then does the puppets' work on the game's update thread, between two
 // frames: spawning and removing actors, posing them, asking for their animations.
 //
 // Actors. The actor manager *(main+0x4e91888) takes create requests (main+0x372a70): x1 the address of the actor
@@ -64,7 +64,7 @@
 #ifdef RT_PATCH_PAGE
 
 #define MAIN 0x7000000000ull
-#define HOST_FRAME (RT_PATCH_PAGE + 0xf00)
+#define HOST_FRAME (RT_PATCH_PAGE + 0x800)   // the set coop_puppet: both bl main+0x3b4e300 -> bl here
 #define TIME_STEP (MAIN + 0x3b4e300)        // the call the site replaces: the time manager's step (x0, s0)
 #define ACTOR_MGR (MAIN + 0x4e91888)        // *: the actor manager
 #define CREATE_FN (MAIN + 0x372a70)         // the create request
