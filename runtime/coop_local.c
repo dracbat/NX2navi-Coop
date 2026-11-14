@@ -2,9 +2,11 @@
 // 127.0.0.1, each game's socket bound to 127.0.0.1 alone, so that no firewall asks about the test. A player's id is
 // its port, a room's number its maker's port. The maker keeps the member list: a member says JOIN once a second, the
 // maker answers everyone with MEMBERS and drops a member it has not heard for five seconds. Loopback loses and
-// reorders nothing in practice, so "reliable" is a plain datagram here.
+// reorders nothing in practice, so "reliable" is a plain datagram here. Each player is named "Player <port>", or as
+// NX2NAVI_COOP_LOCAL_NAMES=<port>=<name>,<port>=<name>,... names that port (for pictures: given the same list, every
+// game of a test shows the same names).
 //
-// Only the environment turns it on: a settings file cannot.
+// Only the environment turns it on, and only the environment names the players: a settings file cannot.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -67,7 +69,25 @@ static void l_stop(void) {
 }
 
 static uint64_t l_self(void) { return L.self; }
-static void l_name_of(uint64_t id, char *out, size_t cap) { snprintf(out, cap, "Player %llu", (unsigned long long)id); }
+
+// The name NX2NAVI_COOP_LOCAL_NAMES gives the player of that port, else "Player <port>". An entry without a port, '=' or
+// a name is passed over.
+static void l_name_of(uint64_t id, char *out, size_t cap) {
+    char list[512];
+    if (plat_getenv("NX2NAVI_COOP_LOCAL_NAMES", list, sizeof list)) {
+        for (char *s = list, *next; s; s = next) {
+            next = strchr(s, ',');
+            if (next) *next++ = 0;
+            char *eq;
+            uint64_t port = strtoull(s, &eq, 10);
+            if (eq != s && *eq == '=' && eq[1] && port == id) {
+                snprintf(out, cap, "%s", eq + 1);
+                return;
+            }
+        }
+    }
+    snprintf(out, cap, "Player %llu", (unsigned long long)id);
+}
 
 static int l_room_create(int max_players) {
     (void)max_players;
