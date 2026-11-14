@@ -93,7 +93,7 @@ static const char *const known[] = {
     "COOP", "COOP_BETA", "COOP_NAME", "COOP_SERVER", "COOP_PORT", "COOP_ROOM", "COOP_AUTO", "COOP_DROP",
     "COOP_PROGRESS", "COOP_ITEMS", "COOP_SONGS", "COOP_QUEST", "COOP_KEYS", "COOP_RUPEES", "COOP_AMMO",
     "COOP_TEST_SET", "COOP_ACCEPT", "COOP_REMOVE", "COOP_RESET_POOLS",
-    // the co-op modules (coop_ext.h): the other players' Links, colours and name tags, kills
+    // the co-op modules (coop_ext.h): the other players' Links, colours and name tags, kills, cutscenes, dialog, the era
     "COOP_PUPPETS", "COOP_PUPPET_HOOK",   // the other players' Links (coop_puppet.c), the patch set's switch
     "COOP_PUPPET_TEST", "COOP_PUPPET_BB", "COOP_PUPPET_ARMS",   // their test, its blackboard copy and the arms mode
     "COOP_PUPPET_GEAR", "COOP_PUPPET_GEAR_DRAWN", "COOP_PUPPET_GEAR_MASK", "COOP_PUPPET_GEAR_TEST",   // the puppets' gear
@@ -102,6 +102,9 @@ static const char *const known[] = {
     "COOP_TAGS_TEST", "COOP_TAGS_LOG", "COOP_TAGS_HEAD", "COOP_TAGS_SIZE", "COOP_TAGS_CAM",   // name tags (coop_tags.h)
     "COOP_LIFE_HOOK", "COOP_KILLS", "COOP_DAMAGE", "COOP_DAMAGE_BOSS", "COOP_SCALE", "COOP_SCALE_PLAYERS",   // kills, shared damage and
     "COOP_SCALE_HP", "COOP_SCALE_TAKEN", "COOP_SHARE_DENY", "COOP_KILL_TEST", "COOP_KILL_LOG",               // difficulty (coop_kill.c)
+    "COOP_CUTSCENES", "COOP_CUTSCENE_BOOT", "COOP_CUTSCENE_RETURN", "COOP_CUTSCENE_BOSSES", "COOP_CUTSCENE_HIDE",   // cutscenes together,
+    "COOP_CUTSCENE_TRACE", "COOP_CUTSCENE_TEST", "COOP_DIALOG", "COOP_TIME", "COOP_TIME_PROBE",   // dialog per player and the time of day (coop_cutscene.c, coop_game.c)
+    "COOP_ERA",   // the era: follow, scene, shared or own (coop_cutscene.c, coop_game.c)
 };
 
 // The nx2navi.ini section a key cfg_set may write goes to when the file lacks it (nx2navi.ini.example's sections).

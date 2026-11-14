@@ -35,6 +35,12 @@
 //   them away again), heart pieces, gold skulltula tokens and the 11 heart reward flags (their pickups are flags of
 //   single objects this layer does not write, so a shared count would pay a piece twice); life, magic, bottle
 //   contents, the equipment worn and the time of day.
+// - per player unless set otherwise: talks with NPCs, the "talked once" markers (struct HaveTalked_Special) and the
+//   HavePlayedEvent flags of the NPC talk events (coop_events.c reads which those are from the player's own event table),
+//   so that each player's dialog stays their own (NX2NAVI_COOP_DIALOG=shared shares them); and the era,
+//   Sequence_IsChildhood, which a shared table would only ever raise from child to adult, while the game sets it itself
+//   from each area it loads, so that a flag pushed into another world does not change its era anyway
+//   (NX2NAVI_COOP_ERA=shared shares it). Every player of a room needs the same two settings: they change the schema.
 //
 // The messages (kinds from COOP_GAME_KIND, reliable): FLAGS is u32 schema and up to 140 pairs of u32 hash and u32
 // value, sent to everyone when a value rises here and to one player as the parts of this game's whole state; ASK is
@@ -50,6 +56,7 @@
 
 #include "cfg.h"
 #include "coop.h"
+#include "coop_events.h"
 #include "coop_game.h"
 #include "cpu.h"
 #include "debug_tools.h"
@@ -95,6 +102,8 @@ enum {
 #define F_MAGIC_SIZE 0x12d63a97u
 #define F_PLAY_CLOCK 0xe53eb6d1u // UInt: seconds played, advanced while the game runs (on the title screen too)
 #define F_LOADING 0xf5deef0au    // Bool: a save is being loaded
+#define S_HAVE_TALKED 0xab601492u   // the "talked once" markers, one member per talk
+#define F_CHILDHOOD 0xcea220d3u  // Bool: Sequence_IsChildhood, set while Link is a child
 
 // Scene changes in progress (Bool, not saved): nothing is read or written while one is set.
 static const uint32_t transition_flags[] = {0x9a9506e7, 0xf8633c7f, 0xf96989b6, 0xe19dfdd6};
@@ -152,6 +161,10 @@ typedef struct { uint64_t to; uint64_t at; int next; int live; } Job;   // this 
 static struct {
     unsigned cfg_seen;
     int on, share, said_version;
+    int dialog_shared, era_shared;   // NX2NAVI_COOP_DIALOG and NX2NAVI_COOP_ERA say "shared"
+    unsigned talk_struct, talk_events, talk_events_listed;   // what the last table left out for dialog per player
+    int era_out;            // ... and whether it left out Sequence_IsChildhood
+    int trace;              // NX2NAVI_COOP_TRACE=1: the hashes of what the room sent and this game dropped, in the log
     // the table
     uint64_t mgr, bool_entries, int_entries;
     int bound;
@@ -174,6 +187,8 @@ static struct {
     uint64_t ask_at;
     Job jobs[JOBS];
     uint32_t refused, applied;
+    uint32_t dropped[8];    // the first hashes of the values refused since the last log line (for the trace)
+    int ndropped;
     uint64_t log_at;
     uint32_t copy_epoch;    // X.room_epoch for which the save's copy was started
     // the pose
@@ -199,8 +214,13 @@ static struct {
     uint32_t other_schema;        // messages with another schema arrived (logged by the game thread)
 } X;
 
-// For the puppets (coop_puppet.c), any thread: the gate opened since the title screen last came back
-// (coop_game_played).
+// For the cutscenes watched together (coop_cutscene.c), any thread: hold, while set, keeps apply() from setting the room's
+// values (they wait in the flags' wanted values); running is the gate of the last present; save_serial moves whenever
+// the title screen comes back (another save may be played next).
+static volatile int32_t hold, running, save_serial;
+// For the time of day (coop_cutscene.c): moves at each load the gate sees and with save_serial.
+static volatile int32_t load_serial;
+// For the puppets and the time of day: the gate opened since the title screen last came back (coop_game_played).
 static volatile int32_t played;
 
 static int rd_ok(uint64_t a, uint64_t n) { return a >= 0x1000 && mem_readable(a, n); }
@@ -274,6 +294,11 @@ static GFlag *add_flag(void) {
     return f;
 }
 
+static int cmp_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
 static int cmp_by_hash(const void *a, const void *b) {
     uint32_t x = G.flags[*(const int *)a].hash, y = G.flags[*(const int *)b].hash;
     return x < y ? -1 : x > y;
@@ -282,15 +307,25 @@ static int cmp_by_hash(const void *a, const void *b) {
 // The table of the manager's shared flags (the header comment's rules). 0 when the database is not readable.
 static int build_table(uint64_t mgr) {
     G.nflags = 0;
-    HSet first_get = {0}, pouch = {0}, keys = {0}, capacity = {0};
-    HSet *sets[] = {&first_get, &pouch, &keys, &capacity};
-    for (int i = 0; i < 4; i++) {
-        sets[i]->cap = 1024;
+    HSet first_get = {0}, pouch = {0}, keys = {0}, capacity = {0}, talked = {0};
+    HSet *sets[] = {&first_get, &pouch, &keys, &capacity, &talked};
+    for (int i = 0; i < 5; i++) {
+        sets[i]->cap = i == 4 ? 8192 : 1024;   // the talk markers: some hundreds
         sets[i]->h = calloc(sets[i]->cap, sizeof *sets[i]->h);
     }
     uint64_t e;
     Walk w = {mgr, &first_get, 0};
     if ((e = struct_of(mgr, S_FIRST_GET))) members(e, add_member, &w);
+    // dialog per player: the talk markers' flags, and the NPC talk events' HavePlayedEvent flags (sorted)
+    const uint32_t *talk_ev = NULL;
+    int ntalk_ev = 0;
+    G.talk_struct = G.talk_events = 0, G.era_out = 0;
+    if (!G.dialog_shared) {
+        w.set = &talked;
+        if ((e = struct_of(mgr, S_HAVE_TALKED))) members(e, add_member, &w);
+        ntalk_ev = coop_events_talk_flags(&talk_ev);
+    }
+    G.talk_events_listed = (unsigned)ntalk_ev;
     w.set = &pouch, w.want = M_STOCK;
     if ((e = struct_of(mgr, S_POUCH))) members(e, add_nested, &w);
     w.set = &keys, w.want = M_SMALL_KEYS;
@@ -312,6 +347,18 @@ static int build_table(uint64_t mgr) {
             uint8_t inv = 0;
             if (!type) {
                 if (file != 0 || reset & RESET_TEMPORARY || !(reset & RESET_NEW_GAME) || IN(heart_reward_flags, h)) continue;
+                if (hset_has(&talked, h)) {   // dialog per player: neither sent nor taken
+                    G.talk_struct++;
+                    continue;
+                }
+                if (ntalk_ev && bsearch(&h, talk_ev, (size_t)ntalk_ev, sizeof *talk_ev, cmp_u32)) {
+                    G.talk_events++;
+                    continue;
+                }
+                if (h == F_CHILDHOOD && !G.era_shared) {   // the era: neither sent nor taken
+                    G.era_out = 1;
+                    continue;
+                }
                 inv = LD8(a + B_DEFAULT) != 0;
             } else if (h == F_RUPEES || hset_has(&keys, h)) {
                 continue;
@@ -326,7 +373,7 @@ static int build_table(uint64_t mgr) {
             f->max = type ? INT_MAX_ITEM : 1;
         }
     }
-    for (int i = 0; i < 4; i++) free(sets[i]->h);
+    for (int i = 0; i < 5; i++) free(sets[i]->h);
     free(G.by_hash), free(G.todo);
     G.by_hash = malloc((size_t)G.nflags * sizeof *G.by_hash);
     G.todo = malloc((size_t)G.nflags * sizeof *G.todo);
@@ -373,6 +420,10 @@ void coop_game_init(void) {
     X.pairs = calloc(INBOX, sizeof *X.pairs);
 }
 
+void coop_game_hold(int on) { __atomic_store_n(&hold, on != 0, __ATOMIC_RELEASE); }
+int coop_game_running(void) { return __atomic_load_n(&running, __ATOMIC_ACQUIRE); }
+unsigned coop_game_save_serial(void) { return (unsigned)__atomic_load_n(&save_serial, __ATOMIC_ACQUIRE); }
+unsigned coop_game_load_serial(void) { return (unsigned)__atomic_load_n(&load_serial, __ATOMIC_ACQUIRE); }
 int coop_game_played(void) { return __atomic_load_n(&played, __ATOMIC_ACQUIRE); }
 int coop_game_backed_up(void) { return __atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE); }
 
@@ -384,9 +435,9 @@ void coop_game_rom_open(const char *path) {
 
 // Before anything of a room reaches the save: a copy of it as it is, every slot. Slow (the whole save), so on a
 // thread of its own, started when a save is played in a room, whether progress is shared or not (the game has its
-// save storage open then); the room's values, and the co-op modules' kills (coop_game_backed_up), wait until the copy
-// is there. arg: the room's count, so a copy that ends after the player went on to another room does not open that
-// one.
+// save storage open then); the room's values, and the co-op modules' kills, scenes and teleports (coop_game_backed_up),
+// wait until the copy is there. arg: the room's count, so a copy that ends after the player went on to another room
+// does not open that one.
 static void copy_save(void *arg) {
     uint32_t epoch = (uint32_t)(uintptr_t)arg;
     char path[PLAT_PATH_MAX];
@@ -450,6 +501,17 @@ static void bind(uint64_t mgr) {
     X.schema = G.schema;
     plat_mutex_unlock(&X.lock);
     rt_log("coop: a save is played: %d flags and counts can be shared", G.nflags);
+    if (G.dialog_shared)
+        rt_log("coop: dialog: shared (NX2NAVI_COOP_DIALOG=shared): the talk markers and the NPC talk events' flags go to the room");
+    else
+        rt_log("coop: dialog: per player: %u talk markers and %u NPC talk events' flags (of %u NPC talk events in the event "
+               "table) are kept out of the room", G.talk_struct, G.talk_events, G.talk_events_listed);
+    if (G.era_out)
+        rt_log("coop: era: Sequence_IsChildhood is kept out of the room's progress, which only ever raises a flag "
+               "(NX2NAVI_COOP_ERA=shared puts it in)");
+    else
+        rt_log("coop: era: Sequence_IsChildhood %s", G.era_shared ? "is in the room's progress (NX2NAVI_COOP_ERA=shared: "
+                                                                    "child to adult only)" : "is not in this save's flags");
 }
 
 static uint64_t player_actor(void) {
@@ -486,23 +548,31 @@ static int gate(uint64_t mgr, float pos[3]) {
         unbind();
         G.loaded = 0;
         __atomic_store_n(&played, 0, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&save_serial, 1, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
     }
     uint32_t clock = LD32(G.clock_entry + I_CURRENT);
     int loading = G.loading_entry && LD8(G.loading_entry + B_CURRENT);
     unsigned moving = 0;
     for (int i = 0; i < 4; i++) moving |= (unsigned)(G.transition_entry[i] && LD8(G.transition_entry[i] + B_CURRENT)) << i;
+    // A teleport of the debug tools (the menu's, or one co-op makes: to a scene another player plays, back from it, into
+    // the room's era) changes area as the game's own scripts do, and the clock jumps then as well: while a save is
+    // played, that is the same save, so its table and the sharing go on
+    int teleport = G.loaded && dbg_teleport_recent();
     if (clock != G.clock) {
         // the clock counts seconds one by one, on the title screen too; any other change is a save being loaded (a load,
         // a new game, the same save again from where it was saved), which also sets the flags: play starts at the next
         // tick after one
         int tick = clock > G.clock && clock - G.clock <= 5;
-        if (!tick) unbind(), G.loaded = 1;
+        if (!tick && teleport) rt_log("coop: the game's clock jumped at a teleport: the same save is played on");
+        if (!tick && !teleport) unbind(), G.loaded = 1, __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
         G.clock = clock;
         G.clock_at = tick ? now : 0;
     }
-    if (loading) unbind(), G.loaded = 1;
+    if (loading && !teleport) unbind(), G.loaded = 1, __atomic_add_fetch(&load_serial, 1, __ATOMIC_RELEASE);
     G.player = player_in_world(pos);
     G.gate = G.loaded && G.player && !loading && !moving && G.clock_at && now - G.clock_at < CLOCK_MS;
+    __atomic_store_n(&running, G.gate, __ATOMIC_RELEASE);
     if (G.gate) __atomic_store_n(&played, 1, __ATOMIC_RELEASE);
     return G.gate;
 }
@@ -581,6 +651,7 @@ static void take_inbox(void) {
         GFlag *f = k >= 0 ? &G.flags[k] : NULL;
         if (!f || !batch[i].value || batch[i].value > f->max) {
             G.refused++;
+            if (G.ndropped < (int)(sizeof G.dropped / sizeof G.dropped[0])) G.dropped[G.ndropped++] = batch[i].hash;
             continue;
         }
         if (batch[i].value > f->want) f->want = batch[i].value;
@@ -603,6 +674,14 @@ static void take_inbox(void) {
 
 static void apply(Cpu *c, uint64_t mgr) {
     if (!__atomic_load_n(&X.save_copied, __ATOMIC_ACQUIRE)) return;   // no copy of the save yet: values wait
+    static int said_hold;
+    int held = __atomic_load_n(&hold, __ATOMIC_ACQUIRE);
+    if (held != said_hold) {
+        said_hold = held;
+        rt_log("coop: %s", held ? "held while this game plays its copy of a scene: the room's values wait"
+                                 : "the hold ends: the room's values are taken again");
+    }
+    if (held) return;
     int done = 0;
     while (G.ntodo && done < APPLY_PER_FRAME) {
         int k = G.todo[--G.ntodo];
@@ -647,6 +726,15 @@ void coop_present(Cpu *c) {
         G.on = cfg_bool("NX2NAVI_COOP_STEAM");
         __atomic_store_n(&X.on, G.on, __ATOMIC_RELAXED);
         G.share = cfg_bool("NX2NAVI_COOP_SHARE");
+        const char *dv = cfg_get("NX2NAVI_COOP_DIALOG"), *ev = cfg_get("NX2NAVI_COOP_ERA");   // no menu rows
+        int dialog_shared = dv && !strcmp(dv, "shared"), era_shared = ev && !strcmp(ev, "shared");
+        if ((dialog_shared != G.dialog_shared || era_shared != G.era_shared) && G.bound) {
+            rt_log("coop: the dialog or the era setting changed: the table of what is shared is made again");
+            unbind();
+        }
+        G.dialog_shared = dialog_shared, G.era_shared = era_shared;
+        char t[8];
+        G.trace = plat_getenv("NX2NAVI_COOP_TRACE", t, sizeof t) && t[0] == '1';
     }
     if (!G.on) {
         if (G.posed) coop_pose_set(NULL), G.posed = 0;
@@ -689,6 +777,7 @@ void coop_present(Cpu *c) {
         }
         return;
     }
+    if (!G.dialog_shared && coop_events_state() != 2) return;   // dialog per player: the event table first (a second)
     if (!G.bound) bind(mgr);
     if (!G.bound) return;
     Cpu keep = *c;
@@ -713,6 +802,11 @@ void coop_present(Cpu *c) {
     if (now - G.log_at >= 5000 && (G.applied || G.refused)) {
         if (G.applied) rt_log("coop: took %u values of progress from the room", G.applied);
         if (G.refused) rt_log("coop: %u values from the room were not ones this game shares; dropped", G.refused);
-        G.applied = G.refused = 0, G.log_at = now;
+        if (G.refused && G.trace) {
+            char list[8 * 9 + 1] = "";
+            for (int i = 0; i < G.ndropped; i++) snprintf(list + strlen(list), sizeof list - strlen(list), " %08x", G.dropped[i]);
+            rt_log("coop: trace: the flags dropped:%s%s", list, G.refused > (uint32_t)G.ndropped ? " ..." : "");
+        }
+        G.applied = G.refused = 0, G.ndropped = 0, G.log_at = now;
     }
 }

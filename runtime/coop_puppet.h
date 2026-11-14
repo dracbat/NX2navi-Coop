@@ -5,7 +5,7 @@
 // work for it. With co-op off it reads one counter and returns.
 void coop_puppet_present(void);
 // At start, after coop_ext_init and before coop_init: the puppets' handlers on the co-op thread (the other players'
-// PUPPET and GEAR, the room's seats), then those of kills.
+// PUPPET and GEAR, the room's seats), then those of kills and cutscenes.
 void coop_puppet_init(void);
 // Kills and difficulty (coop_kill.c), any thread: the other players of the room whose Link is in the game world now
 // (coop_ext.h: their last pose names an area and is fresh).

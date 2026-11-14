@@ -2,14 +2,14 @@
 
 Up to four players, each in their own game with their own save, meet in a room through Steam. In a room you see the
 other players as Links of their own in your world, in their gear and their colours with their names above them, you
-can chat, and you play the story together: what anyone achieves counts for everyone, and an enemy one player kills
-dies in every world.
+can chat, and you play the story together: what anyone achieves counts for everyone, an enemy one player kills dies in
+every world, story cutscenes are watched together, and the time of day and the era are the room's.
 
 **Co-op is experimental and off by default.** Turn it on in the menu's Co-op tab (*Co-op (experimental)*), or with
 `coop_steam = 1` under `[coop]` in `nx2navi.ini`. With it off the game uses no network at all.
 
-Not in this version: pots, grass, enemies the game spawns, the drops of a kill and the time of day are each game's
-own.
+Each world stays its own all the same: pots, grass, enemies the game spawns, the drops of a kill and the talks with
+NPCs are each game's, and each player keeps their own rupees, ammunition, hearts and magic.
 
 ## What you need
 
@@ -53,14 +53,15 @@ rid of someone, the host removes them; to be sure, leave and create a new room.
 
 - **Your save is copied first.** When your game starts to share in a room (you are in the room and playing a save),
   it copies your whole save (every slot) to `coop-backup/<date-time>` in the profile folder, and takes nothing from
-  the room until the copy is made: no progress and no kill. The newest twelve copies are kept. "Going back" below says
-  how to restore one.
+  the room until the copy is made: no progress, kill, cutscene, time of day or teleport. The newest twelve copies are
+  kept. "Going back" below says how to restore one.
 - **Progress is shared while *Share progress* is on** (it is, by default): story, world and dungeon flags (events,
-  talks, chests, doors, switches, bosses, maps and compasses), items and equipment, songs, quest items, wallet, bag and
+  chests, doors, switches, bosses, maps and compasses), items and equipment, songs, quest items, wallet, bag and
   quiver sizes. A flag anyone has set is set for everyone, and of a count the highest wins. A player who joins later
   gets what the room has, and the room what the joiner brings. Your game saves it as its own progress.
 - **Each player keeps their own** small keys, rupees, ammunition, heart pieces and containers, gold skulltula tokens,
-  bottle contents, the trade sequence, the equipment worn, life and magic.
+  bottle contents, the trade sequence, the equipment worn, life and magic, and their talks with NPCs (below,
+  "Dialog").
 - **Nothing is undone.** Leaving a room keeps what was shared. A player in the room plays with you: what they do in
   their world happens in yours, and a game that wants to can send progress it did not play for. Join rooms of people
   you trust with your save, as you would hand them your controller, and go back to the copy if you regret it.
@@ -86,12 +87,13 @@ dropped and counted in the log.
 What co-op shares beyond progress. Each part has a setting under `[coop]` in `nx2navi.ini` (the table at the end of
 this section); only *Your colour* and *Show player names* have rows on the Co-op tab.
 
-- **The other players in your world** (`runtime/coop_puppet.c`). Each other player whose Link is in your area is a Link
-  of its own in your world, made from the Co-op puppets mod: it stands and moves where theirs does, about a tenth of a
-  second behind, plays what their Link plays (the arms too), and wears their sword, shield, sheath, quiver, tunic and
-  ocarina, the sword and shield drawn and sheathed as theirs. What else they hold in their hands (a bow, a slingshot, a
-  bottle) is not shown. It goes when they leave the area or the room, go back to the title screen, or are not heard for
-  3 s. `coop_puppets = 0` shows no other players in your game; yours is still shown in theirs.
+- **The other players in your world** (`runtime/coop_puppet.c`). Each other player whose Link is in your area is a
+  Link of its own in your world, made from the Co-op puppets mod: it stands and moves where theirs does, about a tenth
+  of a second behind, plays what their Link plays (the arms too), and wears their sword, shield, sheath, quiver, tunic
+  and ocarina, the sword and shield drawn and sheathed as theirs. What else they hold in their hands (a bow, a
+  slingshot, a bottle) is not shown. It goes when they leave the area or the room, go back to the title screen, or are
+  not heard for 3 s, and it stays out of a story cutscene that plays in your game. `coop_puppets = 0` shows no other
+  players in your game; yours is still shown in theirs.
 - **Colours** (`runtime/coop_colours.c`). Every player of a room has a colour of their own, green, red, blue or purple,
   the same in every game: on the tunic and cap of that player's Link, their own Link included, on their name and in
   the Co-op tab's list of players. The room's host gives the colours, in the order the players joined: a colour stays
@@ -117,6 +119,34 @@ this section); only *Your colour* and *Show player names* have rows on the Co-op
   are shown here or not: a player on the title screen counts for none, one who leaves counts for 10 s more, and one
   who stays in the pause menu longer than about 13 s stops counting until they play on. Instant kills and the game's
   own changes of life are never scaled. `coop_scale = 0` turns it off.
+- **Cutscenes together** (`runtime/coop_cutscene.c`). A story cutscene one player starts plays in the games of the
+  others of the same age too. A player in the same area plays it where they stand; a player elsewhere is
+  **teleported** to the start position of that area nearest the first player, with the scene reserved for the
+  arrival, and **stays there** afterwards (`coop_cutscene_return = back` takes them back to where they were). A game
+  waits until its player is free (no menu, no talk, no scene of its own) for 45 s at most, and misses the scene after
+  that. While a game plays its copy, the room's progress waits, so that the scene plays as it would alone. Scenes that
+  lead into others play as each world's own chain; a scene the player watched in the last 5 minutes is not followed
+  again, and boss scenes are followed only by players already in that area (`coop_cutscene_bosses`). Talks with NPCs
+  never go to the room.
+- **Dialog** stays each player's own: the "talked once" markers and the flags of the NPC talk events stay out of
+  progress, so what one player said to an NPC is not what the NPC says to the others (`coop_dialog = shared` puts
+  them in the room's progress).
+- **The time of day** is the room's: the room's host sends its time every 2 s, and a jump in any game (the Sun's Song,
+  a scene, a bed) goes to everyone at once. A game sets the room's time while its player is free, and for the host's
+  regular time only when it is more than 5 game minutes off. `coop_time = 0` keeps each player's time their own.
+- **The era** follows the players both ways. The game decides a player's age from each area it loads, so the era is
+  not a progress flag: a change of era goes to the room with the story scene that brought it (the Master Sword's), and
+  a player of the other era plays that scene where it started, which takes their world into the new era as it took
+  the first player's. When that leaves them in their era, or there is no such scene, they are **teleported** into an
+  area of the room's era once they have been free for 4 s: that scene's area in the other era, or else the area of
+  the player whose message gave the room's era (the one who changed it, or the host). **A player who joins a room of
+  the other era is taken into the room's era the same way.** The room's host keeps the room's era and sends it every
+  3 s and at once to a player who comes. `coop_era = scene` follows the scene only, with no teleport; `own` keeps each
+  player's era their own.
+
+The players of a room should use the same settings, and two must match: `coop_dialog` and `coop_era = shared` change
+what progress is shared, so games that differ in either share no progress at all (the log says the messages came
+"from a game that shares other things than this one").
 
 | Key | Default | |
 |---|---|---|
@@ -129,12 +159,21 @@ this section); only *Your colour* and *Show player names* have rows on the Co-op
 | `coop_scale` | `1` | `0`: no difficulty by the number of players |
 | `coop_scale_hp`, `coop_scale_taken` | `1,1.5,2,2.5`, `1,1.25,1.5,1.75` | the factors for 1 to 4 players |
 | `coop_share_deny` | empty | more actor-name prefixes that are not shared, comma separated |
+| `coop_cutscenes` | `1` | `0`: cutscenes are neither sent nor followed |
+| `coop_cutscene_return` | `stay` | `back`: back to where you were after a followed scene |
+| `coop_cutscene_bosses` | `area` | `all`: boss scenes followed from anywhere; `0`: not at all |
+| `coop_dialog` | `own` | `shared`: the talks with NPCs in the room's progress |
+| `coop_time` | `1` | `0`: the time of day stays each player's |
+| `coop_era` | `follow` | `scene`: the scene only, no teleport; `own`: each player's own era; `shared`: the flag in the room's progress, which can only take the era from child to adult |
+
+`coop_cutscenes = 0` with `coop_era = scene` keeps a player where they are: no other player's scene or change of era
+teleports them then.
 
 ## Who can see what
 
 | Who | Sees |
 |---|---|
-| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines, the progress your game shares and the enemies you hit and kill |
+| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines, the progress your game shares, the enemies you hit and kill, the story cutscenes you start, and your game's jumps of the time of day and changes of era |
 | Your Steam friends | that you play Spacewar, and the room (they may join it) |
 | Valve | what Steam sees of any game that uses its lobbies and network: who is in which lobby, and the traffic's size and timing. Steam encrypts the traffic between the games |
 | Your log (`logs/nx2navi.log`) and "Copy system info" | that a room was made or joined, the other players' Steam names, and the lines below; never a room ID or a Steam id. Steam's library prints lines of its own, one with your Steam id, to the console the game was started from; they are not in the log file, but they are in a file you redirect the game's output to yourself |
@@ -160,14 +199,18 @@ A settings file cannot put a game into a room: a room is made or joined only fro
 lobby; asking the host`, `coop: joined the room`, `<name> joined the room`, `<name> left the room`, `coop: the host
 left; this game is the host now`, `coop: left the room`, `coop: the save as it was before this room is in <folder>`,
 `coop: a save is played: N flags and counts can be shared`, `coop: took N values of progress from the room`, `coop: N
-values from the room were not ones this game shares; dropped`.
+values from the room were not ones this game shares; dropped`, `coop: N messages came from a game that shares other
+things than this one (another version); not taken`, `coop: held while this game plays its copy of a scene: the room's
+values wait` and `coop: the hold ends`.
 
 The co-op modules say what they do with their settings at the start and when a setting changes, and then what
 happens: `coop: ext:` (the room's players by seat: `seat 2 'name' is in the room`), `coop: colour:` (`the room's
 colours: ...`), `coop: puppet:` (`seat 1 'name' is in <area>: asking for CoopPuppet_Child`, the Link `made after N
 frames`, its gear), `coop: tags:`, `coop: kill:`, `coop: damage:` and `coop: scale:` (`2 players (...): enemy health
-x1.50, damage to Link x1.25`). A player of the room is named by seat and Steam name, never by id. Lines about what
-another player sent are a few a second for each player at most, and a line says how many were left out.
+x1.50, damage to Link x1.25`), `coop: cutscene:` (`following the scene '<event>' of seat 1 'name'`, `teleporting from
+... to ...`; `time:` lines for the time of day), `coop: era:`, `coop: dialog:` and `coop: events:` (the event table
+it reads). A player of the room is named by seat and Steam name, never by id. Lines about what another player sent
+are a few a second for each player at most, and a line says how many were left out.
 
 ## How it works
 
@@ -205,11 +248,14 @@ they stay and hands each message to its part, at most so many a second of each k
 the ones that rose; it sets the ones the room has and this game lacks through the game's own set routines, as if the
 player had done it, at most sixteen a frame. Nothing is read or set on the title screen, while a save loads or an area
 changes. A game that starts to share asks the others for their whole state and sends its own. Games merge only when
-their tables of what is shared are the same (a sum over the table travels with every message).
+their tables of what is shared are the same (a sum over the table travels with every message): the talks with NPCs and
+the era are out of the table unless `coop_dialog` or `coop_era` is `shared`.
 
-**The host's part.** It decides who is in the room, and it gives each player their colour (COLOURS), at once to a
-player who comes and again at each change, so that a new host carries on with the colours the room had. Progress has
-no arbiter, because every shared value only ever rises: two games that set the same flag agree whatever the order.
+**The host's part.** It decides who is in the room, and it keeps what has to be one value for the room: the colours,
+the time of day and the era, each sent at once to a player who comes and again at times, so that a new host carries on
+from what it last had. Progress has no arbiter, because every shared value only ever rises: two games that set the
+same flag agree whatever the order. A jump of the time or a change of era carries an order that each one makes one
+higher, so the newest wins in every game, and an order far from the room's is taken from the host alone.
 
 ## Checks
 
@@ -236,8 +282,9 @@ no arbiter, because every shared value only ever rises: two games that set the s
   refusals, every shorter and longer copy of each message, and random bytes. Needs no window, GPU or game files.
 - Test hooks, from the environment or `nx2navi.ini`, logged at the start: `NX2NAVI_COOP_PUPPET_TEST=shadow` (a puppet
   that copies this game's own Link, beside him), `NX2NAVI_COOP_KILL_TEST` (hits and kills as the player's own, or as
-  another player's) and the debug tools' `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`); the header comments of
-  `coop_puppet.c`, `coop_kill.c` and `debug_tools.c` give their forms.
+  another player's), `NX2NAVI_COOP_CUTSCENE_TEST` (a scene started, a time of day set, a teleport) and the debug tools'
+  `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`); the header comments of `coop_puppet.c`, `coop_kill.c`,
+  `coop_cutscene.c` and `debug_tools.c` give their forms.
 - `NX2NAVI_MENU_TEST_SET=<frame>:COOP_DO=create | leave | join:<room id> | chat:<text> | page:join | page:invite |
   page:chat | page:leave` (environment only) does what the Co-op tab's row or window does.
 - `ocarina --probe-services` checks, among the rest, that every text of the tab has its four languages.
