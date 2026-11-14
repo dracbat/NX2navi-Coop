@@ -198,6 +198,10 @@ static struct {
     uint32_t other_schema;        // messages with another schema arrived (logged by the game thread)
 } X;
 
+// For the puppets (coop_puppet.c), any thread: the gate opened since the title screen last came back
+// (coop_game_played).
+static volatile int32_t played;
+
 static int rd_ok(uint64_t a, uint64_t n) { return a >= 0x1000 && mem_readable(a, n); }
 
 // The entry of hash in the container at base (stride bytes per entry), 0 when absent.
@@ -368,6 +372,8 @@ void coop_game_init(void) {
     X.pairs = calloc(INBOX, sizeof *X.pairs);
 }
 
+int coop_game_played(void) { return __atomic_load_n(&played, __ATOMIC_ACQUIRE); }
+
 void coop_game_rom_open(const char *path) {
     // the title screen's event flow is opened each time the title screen starts: at boot and after the pause menu's
     // Title Screen
@@ -476,6 +482,7 @@ static int gate(uint64_t mgr, float pos[3]) {
         G.titles = titles;
         unbind();
         G.loaded = 0;
+        __atomic_store_n(&played, 0, __ATOMIC_RELEASE);
     }
     uint32_t clock = LD32(G.clock_entry + I_CURRENT);
     int loading = G.loading_entry && LD8(G.loading_entry + B_CURRENT);
@@ -493,6 +500,7 @@ static int gate(uint64_t mgr, float pos[3]) {
     if (loading) unbind(), G.loaded = 1;
     G.player = player_in_world(pos);
     G.gate = G.loaded && G.player && !loading && !moving && G.clock_at && now - G.clock_at < CLOCK_MS;
+    if (G.gate) __atomic_store_n(&played, 1, __ATOMIC_RELEASE);
     return G.gate;
 }
 

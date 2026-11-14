@@ -1,14 +1,13 @@
 # Co-op
 
 Up to four players, each in their own game with their own save, meet in a room through Steam. In a room you see the
-other players' names where their Link stands in your world, you can chat, and progress is shared: what anyone achieves
-counts for everyone.
+other players as Links of their own in your world, in their gear and their colours with their names above them, you
+can chat, and progress is shared: what anyone achieves counts for everyone.
 
 **Co-op is experimental and off by default.** Turn it on in the menu's Co-op tab (*Co-op (experimental)*), or with
 `coop_steam = 1` under `[coop]` in `nx2navi.ini`. With it off the game uses no network at all.
 
-Not in this version: the other players are shown as a name with a distance, not as a Link model, and enemies, pots
-and the time of day are each game's own.
+Not in this version: enemies, pots and the time of day are each game's own.
 
 ## What you need
 
@@ -24,6 +23,9 @@ and the time of day are each game's own.
   old; the game loads it from that one place only.
 - **The same NX2navi version and game version (1.1.1)** as the others. A game of another version is told so and does
   not get into the room.
+- **The Co-op puppets mod**, which the launcher makes from your own game when it builds it (*Make the Co-op Players*):
+  the other players' Links are made from it. Without it, or with it switched off in the launcher's Mods screen, you
+  play together as well but see neither the other players' Links nor their names; they still see yours.
 
 ## Rooms
 
@@ -35,8 +37,9 @@ and the time of day are each game's own.
   Co-op tab, where *Join their room* accepts it. A friend whose game is not running gets Steam's own invite, which
   would start Spacewar, not NX2navi: tell them the room ID instead. When the game was started from Steam (the
   launcher's *Add to Steam*), Steam's own invite window is offered as well.
-- **Players** lists who is in the room and the area each one's Link is in. The host can press a player to remove
-  them; a removed player cannot come back into that room.
+- **Players** lists who is in the room, each player's colour and the area each one's Link is in. The host can press a
+  player to remove them; a removed player cannot come back into that room.
+- **Your colour** (`coop_colour`): Auto or one of the colours no other player of the room has (below, "Colours").
 - **Leave the room** asks first. When the host leaves, Steam hands the room to another player, whose game is the host
   from then on.
 
@@ -58,7 +61,8 @@ rid of someone, the host removes them; to be sure, leave and create a new room.
 - **Nothing is undone.** Leaving a room keeps what was shared. A player in the room plays with you: what they do in
   their world happens in yours, and a game that wants to can send progress it did not play for. Join rooms of people
   you trust with your save, as you would hand them your controller, and go back to the copy if you regret it.
-- With *Share progress* off, your game sends and takes no progress: only names, positions and chat.
+- With *Share progress* off, your game sends and takes no progress. The rest of "Playing together" below still goes:
+  each part has a setting of its own.
 
 Every value from the room is checked against your game's own table of what is shared before it is used: the flag must
 be one of the shared ones, an on/off flag can only be set to "done", an item count only up to 999. Anything else is
@@ -74,11 +78,41 @@ dropped and counted in the log.
    into a new `save/<numbers>` of the same name.
 5. Start the game: every slot is as it was before the room's progress reached it.
 
+## Playing together
+
+What co-op shares beyond progress. Each part has a setting under `[coop]` in `nx2navi.ini` (the table at the end of
+this section); only *Your colour* and *Show player names* have rows on the Co-op tab.
+
+- **The other players in your world** (`runtime/coop_puppet.c`). Each other player whose Link is in your area is a Link
+  of its own in your world, made from the Co-op puppets mod: it stands and moves where theirs does, about a tenth of a
+  second behind, plays what their Link plays (the arms too), and wears their sword, shield, sheath, quiver, tunic and
+  ocarina, the sword and shield drawn and sheathed as theirs. What else they hold in their hands (a bow, a slingshot, a
+  bottle) is not shown. It goes when they leave the area or the room, go back to the title screen, or are not heard for
+  3 s. `coop_puppets = 0` shows no other players in your game; yours is still shown in theirs.
+- **Colours** (`runtime/coop_colours.c`). Every player of a room has a colour of their own, green, red, blue or purple,
+  the same in every game: on the tunic and cap of that player's Link, their own Link included, on their name and in
+  the Co-op tab's list of players. The room's host gives the colours, in the order the players joined: a colour stays
+  with its player, a player who picks a colour no other player has gets it (that is how to change colour), and a
+  player who has none gets their pick when it is free, else the first free one of green, red, blue and purple. So the
+  host is green and the next player red unless they pick otherwise. Of two players who pick one colour at the same
+  moment, the one who joined first gets it. A new host carries on with the colours the room had.
+- **Names** (`runtime/coop_tags.c`, `runtime/ui/coop_tags_view.cpp`). Each other player's Steam name stands above their
+  Link in their colour, smaller with distance, faded from 45 m and gone beyond 60 m, and never on the pause screen or
+  while an area loads. The names are drawn with the camera of the picture shown, so they need no upscaler; they show
+  through walls. *Show player names* (`coop_names = 0`) turns them off.
+
+| Key | Default | |
+|---|---|---|
+| `coop_puppets` | `1` | `0`: no other players' Links (nor names) in your game; yours is still sent |
+| `coop_puppet_gear` | `1` | `0`: the other players' Links show without their gear |
+| `coop_colour` | `auto` | the Co-op tab's *Your colour*: `green`, `red`, `blue` or `purple`; `auto` the first free one |
+| `coop_colours` | `1` | `0`: no room colours |
+
 ## Who can see what
 
 | Who | Sees |
 |---|---|
-| The players in the room | your Steam name, the area your Link is in and where he stands, your chat lines, the progress your game shares |
+| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines and the progress your game shares |
 | Your Steam friends | that you play Spacewar, and the room (they may join it) |
 | Valve | what Steam sees of any game that uses its lobbies and network: who is in which lobby, and the traffic's size and timing. Steam encrypts the traffic between the games |
 | Your log (`logs/nx2navi.log`) and "Copy system info" | that a room was made or joined, the other players' Steam names, and the lines below; never a room ID or a Steam id. Steam's library prints lines of its own, one with your Steam id, to the console the game was started from; they are not in the log file, but they are in a file you redirect the game's output to yourself |
@@ -86,13 +120,14 @@ dropped and counted in the log.
 ## Settings
 
 `nx2navi.ini`, section `[coop]`; the menu's Co-op tab has a row for each. The environment variable is the key with
-`NX2NAVI_`.
+`NX2NAVI_`. "Playing together" above lists the other co-op settings.
 
 | Key | Default | |
 |---|---|---|
 | `coop_steam` | `0` | on or off, at once. On: the game signs in to Steam; off: no network. (`coop`, the switch of the co-op of versions up to 0.9.2, does nothing: a line of it left in a file turns nothing on) |
 | `coop_share` | `1` | in a room, share progress, items and songs (above) |
-| `coop_names` | `1` | show the other players' names where they stand. Needs DLSS, FSR or TAA on: only then does the menu know where the camera looks |
+| `coop_names` | `1` | show each other player's name above their Link, in their colour |
+| `coop_colour` | `auto` | the colour you pick (above, "Colours") |
 | `coop_chat` | `1` | show new chat lines, and who joined or left, over the game for a few seconds while the menu is closed |
 
 A settings file cannot put a game into a room: a room is made or joined only from the menu.
@@ -106,15 +141,17 @@ left; this game is the host now`, `coop: left the room`, `coop: the save as it w
 values from the room were not ones this game shares; dropped`.
 
 The co-op modules say what they do with their settings at the start and when a setting changes, and then what
-happens: `coop: ext:` (the room's players by seat: `seat 2 'name' is in the room`). A player of the room is named by
-seat and Steam name, never by id. Lines about what another player sent are a few a second for each player at most, and
-a line says how many were left out.
+happens: `coop: ext:` (the room's players by seat: `seat 2 'name' is in the room`), `coop: colour:` (`the room's
+colours: ...`), `coop: puppet:` (`seat 1 'name' is in <area>: asking for CoopPuppet_Child`, the Link `made after N
+frames`, its gear) and `coop: tags:`. A player of the room is named by seat and Steam name, never by id. Lines about
+what another player sent are a few a second for each player at most, and a line says how many were left out.
 
 ## How it works
 
 For a reviewer. The code is `runtime/steam.c` (the Steam library), `runtime/coop.c` (the room), `runtime/coop_game.c`
-(the game side), `runtime/ui/coop_page.cpp` (the menu's tab and the names over the game) and `runtime/coop_ext.c` (the
-glue between the room and the modules that share more than progress).
+(the game side), `runtime/ui/coop_page.cpp` (the menu's tab, and the chat and invites over the game) and
+`runtime/coop_ext.c` (the glue between the room and the modules that share more than progress, named in "Playing
+together").
 
 **The Steam library.** `steam.c` loads `steam_api64.dll` from beside the exe at run time and calls the plain C
 functions it exports; it declares them itself, and nothing of the Steamworks SDK is in this repository. It sets
@@ -147,8 +184,9 @@ player had done it, at most sixteen a frame. Nothing is read or set on the title
 changes. A game that starts to share asks the others for their whole state and sends its own. Games merge only when
 their tables of what is shared are the same (a sum over the table travels with every message).
 
-**The host's part is small**: it decides who is in the room. Progress has no arbiter, because every shared value only
-ever rises: two games that set the same flag agree whatever the order.
+**The host's part.** It decides who is in the room, and it gives each player their colour (COLOURS), at once to a
+player who comes and again at each change, so that a new host carries on with the colours the room had. Progress has
+no arbiter, because every shared value only ever rises: two games that set the same flag agree whatever the order.
 
 ## Checks
 
@@ -173,6 +211,9 @@ ever rises: two games that set the same flag agree whatever the order.
 - `ocarina --probe-coop-ext` checks the codecs of the co-op modules' messages against the byte vectors of
   `tests/coop_ext_vectors.txt` (which `tests/coop_ext_peer.py --write-vectors` writes from a codec of its own), their
   refusals, every shorter and longer copy of each message, and random bytes. Needs no window, GPU or game files.
+- Test hooks, from the environment or `nx2navi.ini`, logged at the start: `NX2NAVI_COOP_PUPPET_TEST=shadow` (a puppet
+  that copies this game's own Link, beside him) and the debug tools' `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`); the
+  header comments of `coop_puppet.c` and `debug_tools.c` give their forms.
 - `NX2NAVI_MENU_TEST_SET=<frame>:COOP_DO=create | leave | join:<room id> | chat:<text> | page:join | page:invite |
   page:chat | page:leave` (environment only) does what the Co-op tab's row or window does.
 - `ocarina --probe-services` checks, among the rest, that every text of the tab has its four languages.

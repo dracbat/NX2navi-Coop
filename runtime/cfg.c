@@ -93,6 +93,13 @@ static const char *const known[] = {
     "COOP", "COOP_BETA", "COOP_NAME", "COOP_SERVER", "COOP_PORT", "COOP_ROOM", "COOP_AUTO", "COOP_DROP",
     "COOP_PROGRESS", "COOP_ITEMS", "COOP_SONGS", "COOP_QUEST", "COOP_KEYS", "COOP_RUPEES", "COOP_AMMO",
     "COOP_TEST_SET", "COOP_ACCEPT", "COOP_REMOVE", "COOP_RESET_POOLS",
+    // the co-op modules (coop_ext.h): the other players' Links, colours and name tags
+    "COOP_PUPPETS", "COOP_PUPPET_HOOK",   // the other players' Links (coop_puppet.c), the patch set's switch
+    "COOP_PUPPET_TEST", "COOP_PUPPET_BB", "COOP_PUPPET_ARMS",   // their test, its blackboard copy and the arms mode
+    "COOP_PUPPET_GEAR", "COOP_PUPPET_GEAR_DRAWN", "COOP_PUPPET_GEAR_MASK", "COOP_PUPPET_GEAR_TEST",   // the puppets' gear
+    "COOP_COLOUR_SELF", "COOP_COLOUR_TEST", "COOP_COLOUR_PARAM", "COOP_COLOUR_STRENGTH", "COOP_COLOUR_RGB", "COOP_COLOUR_NATIVE", "COOP_COLOUR_PROBE", "COOP_COLOUR_PROBE_TEST", "COOP_COLOUR_DARK", "COOP_COLOUR_DIAG",   // the Links' player colours (coop_puppet.c)
+    "COOP_COLOUR", "COOP_COLOURS", "COOP_POS_GEAR",   // the colour picked, room colours, the gear the others are sent (coop_puppet.c)
+    "COOP_TAGS_TEST", "COOP_TAGS_LOG", "COOP_TAGS_HEAD", "COOP_TAGS_SIZE", "COOP_TAGS_CAM",   // name tags (coop_tags.h)
 };
 
 // The nx2navi.ini section a key cfg_set may write goes to when the file lacks it (nx2navi.ini.example's sections).
@@ -122,7 +129,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"LOW_LATENCY", "display"},
     {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
     {"DISCORD_RPC", "discord"}, {"DISCORD_APP_ID", "discord"}, {"DISCORD_IMAGE", "discord"},
-    {"COOP_STEAM", "coop"}, {"COOP_SHARE", "coop"}, {"COOP_NAMES", "coop"}, {"COOP_CHAT", "coop"},
+    {"COOP_STEAM", "coop"}, {"COOP_SHARE", "coop"}, {"COOP_NAMES", "coop"}, {"COOP_CHAT", "coop"}, {"COOP_COLOUR", "coop"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
     {"SHADOW_PCF", "display"},
@@ -298,6 +305,8 @@ static const CfgMeta metas[] = {
     // COOP_NAMES shows the other players' names where they stand, COOP_CHAT shows the chat's lines over the game.
     {"COOP_STEAM", "0", "0|1", LIVE}, {"COOP_SHARE", "1", "0|1", LIVE}, {"COOP_NAMES", "1", "0|1", LIVE},
     {"COOP_CHAT", "1", "0|1", LIVE},
+    // COOP_COLOUR: the colour this player picks for their Link in a room (coop_colours.c); auto: the first free one
+    {"COOP_COLOUR", "auto", "auto|green|red|blue|purple", LIVE},
     // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},
     {"REPLAY_PIPE", "0", "0..4", RESTART},

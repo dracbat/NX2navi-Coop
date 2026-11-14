@@ -755,8 +755,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                 "profile folder. Small keys, rupees, ammunition and hearts stay your own. Off: only names and "
                                 "chat are shared.",
     [UI_MENU_COOP_NAMES] = "Show player names",
-    [UI_MENU_COOP_NAMES_DESC] = "Shows the name of each other player where their Link stands in your world, with the distance. "
-                                "Needs DLSS, FSR or TAA on (the game tells the menu where the camera looks only then).",
+    [UI_MENU_COOP_NAMES_DESC] = "Shows the name of each other player above their Link in your world, in their colour.",
     [UI_MENU_COOP_CHAT_SHOW] = "Show chat over the game",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "New chat lines and who joined or left show for a few seconds while the menu is closed.",
     [UI_MENU_COOP_N_CREATE_FAILED] = "Steam could not make the room. Try again in a moment.",
@@ -771,6 +770,15 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_N_LEFT] = "You left the room.",
     [UI_MENU_COOP_LOCAL] = "Test mode: a stand-in for Steam on this PC.",
     [UI_MENU_COOP_TOAST_INVITE] = "%s invites you to a room: open the menu's Co-op tab.",
+    [UI_MENU_COOP_COLOUR] = "Your colour",
+    [UI_MENU_COOP_COLOUR_DESC] = "The colour of your Link and of your name above it, as everyone in the room sees them. Every "
+                                 "player in a room has a colour of their own: the room's host gives you this one when no other "
+                                 "player has it, else the first free colour. Auto: the first free colour.",
+    [UI_MENU_COOP_COLOUR_AUTO] = "Auto",
+    [UI_MENU_COOP_COLOUR_GREEN] = "Green",
+    [UI_MENU_COOP_COLOUR_RED] = "Red",
+    [UI_MENU_COOP_COLOUR_BLUE] = "Blue",
+    [UI_MENU_COOP_COLOUR_PURPLE] = "Purple",
     [UI_MENU_CAPTURE_SAVED] = "Bug capture %d saved",
     [UI_MENU_CAPTURE_FOLDER] = "Folder: %s",
     [UI_MENU_CAPTURE_FAILED] = "Bug capture %d could not be saved",
@@ -1451,8 +1459,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                 "профиля. Малые ключи, рупии, боеприпасы и сердца остаются вашими. Выкл.: общими остаются только "
                                 "имена и чат.",
     [UI_MENU_COOP_NAMES] = "Показывать имена игроков",
-    [UI_MENU_COOP_NAMES_DESC] = "Показывает имя каждого другого игрока там, где его Линк стоит в вашем мире, и расстояние до "
-                                "него. Нужны включённые DLSS, FSR или TAA (только тогда меню знает, куда смотрит камера).",
+    [UI_MENU_COOP_NAMES_DESC] = "Показывает имена других игроков над их Линками в вашем мире, цветом каждого игрока.",
     [UI_MENU_COOP_CHAT_SHOW] = "Показывать чат поверх игры",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "Новые строки чата и сообщения о входе и выходе игроков показываются несколько секунд, пока меню "
                                     "закрыто.",
@@ -1468,6 +1475,15 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_N_LEFT] = "Вы вышли из комнаты.",
     [UI_MENU_COOP_LOCAL] = "Тестовый режим: замена Steam на этом ПК.",
     [UI_MENU_COOP_TOAST_INVITE] = "%s приглашает вас в комнату: откройте вкладку «Кооператив» в меню.",
+    [UI_MENU_COOP_COLOUR] = "Ваш цвет",
+    [UI_MENU_COOP_COLOUR_DESC] = "Цвет вашего Линка и вашего имени над ним, каким их видят все в комнате. У каждого игрока в "
+                                 "комнате свой цвет: хост комнаты даёт вам этот цвет, если его нет у другого игрока, иначе "
+                                 "первый свободный. «Авто»: первый свободный цвет.",
+    [UI_MENU_COOP_COLOUR_AUTO] = "Авто",
+    [UI_MENU_COOP_COLOUR_GREEN] = "Зелёный",
+    [UI_MENU_COOP_COLOUR_RED] = "Красный",
+    [UI_MENU_COOP_COLOUR_BLUE] = "Синий",
+    [UI_MENU_COOP_COLOUR_PURPLE] = "Фиолетовый",
     [UI_MENU_CAPTURE_SAVED] = "Снимок ошибки %d сохранён",
     [UI_MENU_CAPTURE_FOLDER] = "Папка: %s",
     [UI_MENU_CAPTURE_FAILED] = "Снимок ошибки %d не удалось сохранить",
@@ -2121,8 +2137,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                                 "perfil. Chaves pequenas, rupias, munição e corações continuam seus. Desligado: só nomes e chat "
                                 "são compartilhados.",
     [UI_MENU_COOP_NAMES] = "Mostrar nomes dos jogadores",
-    [UI_MENU_COOP_NAMES_DESC] = "Mostra o nome de cada outro jogador onde o Link dele está no seu mundo, com a distância. Precisa "
-                                "de DLSS, FSR ou TAA ligado (só assim o menu sabe para onde a câmera olha).",
+    [UI_MENU_COOP_NAMES_DESC] = "Mostra o nome de cada outro jogador acima do Link dele no seu mundo, na cor desse jogador.",
     [UI_MENU_COOP_CHAT_SHOW] = "Mostrar o chat sobre o jogo",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "Novas linhas do chat e quem entrou ou saiu aparecem por alguns segundos com o menu fechado.",
     [UI_MENU_COOP_N_CREATE_FAILED] = "A Steam não conseguiu criar a sala. Tente de novo em instantes.",
@@ -2137,6 +2152,15 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_N_LEFT] = "Você saiu da sala.",
     [UI_MENU_COOP_LOCAL] = "Modo de teste: um substituto da Steam neste PC.",
     [UI_MENU_COOP_TOAST_INVITE] = "%s convida você para uma sala: abra a aba Co-op do menu.",
+    [UI_MENU_COOP_COLOUR] = "Sua cor",
+    [UI_MENU_COOP_COLOUR_DESC] = "A cor do seu Link e do seu nome acima dele, como todos na sala os veem. Cada jogador de uma "
+                                 "sala tem uma cor só sua: o anfitrião da sala dá esta cor a você quando nenhum outro jogador a "
+                                 "tem; senão, a primeira cor livre. Automática: a primeira cor livre.",
+    [UI_MENU_COOP_COLOUR_AUTO] = "Automática",
+    [UI_MENU_COOP_COLOUR_GREEN] = "Verde",
+    [UI_MENU_COOP_COLOUR_RED] = "Vermelho",
+    [UI_MENU_COOP_COLOUR_BLUE] = "Azul",
+    [UI_MENU_COOP_COLOUR_PURPLE] = "Roxo",
     [UI_MENU_CAPTURE_SAVED] = "Captura de bug %d salva",
     [UI_MENU_CAPTURE_FOLDER] = "Pasta: %s",
     [UI_MENU_CAPTURE_FAILED] = "Não foi possível salvar a captura de bug %d",
@@ -2865,7 +2889,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_SHARE_DESC] = "在房间里，任何人取得的进展都算作所有人的：剧情、宝箱、门、道具和乐曲。在房间里的任何内容写入你的存档之前，存档会先复制到配置文件夹里的 "
                                 "coop-backup。小钥匙、卢比、弹药和心保持各自独立。关闭：只共享名字和聊天。",
     [UI_MENU_COOP_NAMES] = "显示玩家名字",
-    [UI_MENU_COOP_NAMES_DESC] = "在其他玩家的林克所处的位置显示其名字和距离。需要开启 DLSS、FSR 或 TAA（只有这样菜单才知道摄像机的朝向）。",
+    [UI_MENU_COOP_NAMES_DESC] = "在你的世界里，在其他玩家的林克上方以其颜色显示名字。",
     [UI_MENU_COOP_CHAT_SHOW] = "在游戏画面上显示聊天",
     [UI_MENU_COOP_CHAT_SHOW_DESC] = "菜单关闭时，新的聊天内容以及玩家加入或离开的提示会显示几秒钟。",
     [UI_MENU_COOP_N_CREATE_FAILED] = "Steam 无法创建房间。请稍后再试。",
@@ -2880,6 +2904,14 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_N_LEFT] = "你已离开房间。",
     [UI_MENU_COOP_LOCAL] = "测试模式：在本机上代替 Steam。",
     [UI_MENU_COOP_TOAST_INVITE] = "%s 邀请你加入房间：请打开菜单的“合作”页。",
+    [UI_MENU_COOP_COLOUR] = "你的颜色",
+    [UI_MENU_COOP_COLOUR_DESC] = "房间里所有人看到的你的林克及其上方名字的颜色。房间里每位玩家的颜色各不相同：如果没有其他玩家使用这个颜色，"
+                                 "房主就把它给你，否则给你第一个空闲的颜色。自动：第一个空闲的颜色。",
+    [UI_MENU_COOP_COLOUR_AUTO] = "自动",
+    [UI_MENU_COOP_COLOUR_GREEN] = "绿色",
+    [UI_MENU_COOP_COLOUR_RED] = "红色",
+    [UI_MENU_COOP_COLOUR_BLUE] = "蓝色",
+    [UI_MENU_COOP_COLOUR_PURPLE] = "紫色",
     [UI_MENU_CAPTURE_SAVED] = "错误快照 %d 已保存",
     [UI_MENU_CAPTURE_FOLDER] = "文件夹：%s",
     [UI_MENU_CAPTURE_FAILED] = "错误快照 %d 无法保存",

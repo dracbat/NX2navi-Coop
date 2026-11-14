@@ -104,6 +104,7 @@ extern const char rt_port_version[];
 void cheats_frame(uint64_t frame);   // cheats.c
 bool tab_cheats(float scale);        // ui/cheats_tab.cpp; true: restart into the rebuild
 }
+#include "ui/coop_tags_view.h"   // co-op name tags: drawn over the game while the menu is closed
 
 // Roboto Medium (Apache-2.0, ui/fonts/LICENSE-Roboto.txt) with Latin and Cyrillic glyphs. The file comes in with
 // #embed where the compiler has it (clang 19 and later define __has_embed). An older one, which a Linux build with the
@@ -2188,7 +2189,8 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     if (g_perf_save.exchange(0)) cfg_save();
     perf_tick(plat_now_ns(), t);
     amiibo_tick();
-    const bool coop_draws = coop_overlay_tick();   // names of the other players, chat lines, an invite: over the game
+    const bool coop_draws = coop_overlay_tick();   // chat lines and an invite over the game
+    const bool tags = coop_tags_tick(t);    // co-op name tags: the other players' names over their Links
     int cap_number, cap_ok;
     char cap_name[64];
     const bool capture_shows = bugcap_note(&cap_number, &cap_ok, cap_name) != 0;   // the note after F8
@@ -2209,7 +2211,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
             if (g_debug.load()) debug_menu_tab(0);
             set_open(1);
             open = true;
-        } else if (!g_perf_mode && !coop_draws && !capture_shows) {
+        } else if (!g_perf_mode && !coop_draws && !tags && !capture_shows) {
             return 0;
         }
     }
@@ -2274,6 +2276,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     } else if (open) {
         layout_menu(t->width, t->height, scale);
     }
+    if (!open && tags) coop_tags_draw(t, scale);   // background list: the panel and the co-op overlay stay above
     perf_draw(t, scale);
     if (coop_draws) coop_overlay_draw((float)t->width, (float)t->height, scale, open);
     capture_note(t, scale, coop_draws);
