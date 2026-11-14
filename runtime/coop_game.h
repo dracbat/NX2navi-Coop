@@ -23,10 +23,11 @@ unsigned coop_game_save_serial(void);
 // included. On the title screen Link's actor and the area flag stay from the save played before, so they alone do not
 // tell that this player is in the world.
 int coop_game_played(void);
-// The time of day (coop_cutscene.c), any thread: a counter that moves whenever a save is loaded (another one, or the
-// same one again) and whenever the title screen comes back, so that a time read before it may be another save's.
+// The time of day and the small keys (coop_cutscene.c, coop_keys.c), any thread: a counter that moves whenever a save
+// is loaded (another one, or the same one again) and whenever the title screen comes back, so that a time or a count
+// read before it may be another save's.
 unsigned coop_game_load_serial(void);
 // The co-op modules, any thread: 1 once the save was copied for this room (coop_present starts the copy in a room
-// with a save played, whether progress is shared or not); a received kill, a followed scene, an era's teleport or a time
-// of day waits for it.
+// with a save played, whether progress is shared or not); a received kill, a followed scene, an era's teleport, a time
+// of day and the room's small keys wait for it.
 int coop_game_backed_up(void);

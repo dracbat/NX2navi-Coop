@@ -57,20 +57,25 @@ rid of someone, the host removes them; to be sure, leave and create a new room.
 
 - **Your save is copied first.** When your game starts to share in a room (you are in the room and playing a save),
   it copies your whole save (every slot) to `coop-backup/<date-time>` in the profile folder, and takes nothing from
-  the room until the copy is made: no progress, kill, cutscene, time of day or teleport. The newest twelve copies are
-  kept. "Going back" below says how to restore one.
+  the room until the copy is made: no progress, small key, kill, cutscene, time of day or teleport. The newest twelve
+  copies are kept. "Going back" below says how to restore one.
 - **Progress is shared while *Share progress* is on** (it is, by default): story, world and dungeon flags (events,
   chests, doors, switches, bosses, maps and compasses), items and equipment, songs, quest items, wallet, bag and
   quiver sizes. A flag anyone has set is set for everyone, and of a count the highest wins. A player who joins later
   gets what the room has, and the room what the joiner brings. Your game saves it as its own progress.
-- **Each player keeps their own** small keys, rupees, ammunition, heart pieces and containers, gold skulltula tokens,
-  bottle contents, the trade sequence, the equipment worn, life and magic, and their talks with NPCs (below,
-  "Dialog").
+- **Each player keeps their own** rupees, ammunition, heart pieces and containers, gold skulltula tokens, bottle
+  contents, the trade sequence, the equipment worn, life and magic, and their talks with NPCs (below, "Dialog").
+- **Small keys are the room's** while *Shared small keys* is on (it is, by default, with *Share progress*): one count
+  for each dungeon, kept by the room's host. A key anyone picks up is everyone's, and a locked door anyone opens uses up
+  a key for everyone, as the door is open for everyone. A door costs the room one key even when two players open it,
+  each in their own world, before it is open in the other's: the second gets their key back. A player who joins takes
+  the room's counts, whatever their own save had; when the host leaves, the next host carries on from the counts it
+  had. Off, or with a host who has it off, each player's small keys are their own.
 - **Nothing is undone.** Leaving a room keeps what was shared. A player in the room plays with you: what they do in
   their world happens in yours, and a game that wants to can send progress it did not play for. Join rooms of people
   you trust with your save, as you would hand them your controller, and go back to the copy if you regret it.
-- With *Share progress* off, your game sends and takes no progress. The rest of "Playing together" below still goes:
-  each part has a setting of its own.
+- With *Share progress* off, your game sends and takes no progress, and your small keys stay your own. The rest of
+  "Playing together" below still goes: each part has a setting of its own.
 
 Every value from the room is checked against your game's own table of what is shared before it is used: the flag must
 be one of the shared ones, an on/off flag can only be set to "done", an item count only up to 999. Anything else is
@@ -89,7 +94,7 @@ dropped and counted in the log.
 ## Playing together
 
 What co-op shares beyond progress. Each part has a setting under `[coop]` in `nx2navi.ini` (the table at the end of
-this section); only *Your colour* and *Show player names* have rows on the Co-op tab.
+this section); only *Your colour*, *Show player names* and *Shared small keys* have rows on the Co-op tab.
 
 - **The other players in your world** (`runtime/coop_puppet.c`). Each other player whose Link is in your area is a
   Link of its own in your world, made from the Co-op puppets mod: it stands and moves where theirs does, about a tenth
@@ -147,6 +152,7 @@ this section); only *Your colour* and *Show player names* have rows on the Co-op
   the other era is taken into the room's era the same way.** The room's host keeps the room's era and sends it every
   3 s and at once to a player who comes. `coop_era = scene` follows the scene only, with no teleport; `own` keeps each
   player's era their own.
+- **Small keys** are the room's (above, "What joining a room means for your save").
 
 The players of a room should use the same settings, and two must match: `coop_dialog` and `coop_era = shared` change
 what progress is shared, so games that differ in either share no progress at all (the log says the messages came
@@ -177,7 +183,7 @@ teleports them then.
 
 | Who | Sees |
 |---|---|
-| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines, the progress your game shares, the enemies you hit and kill, the story cutscenes you start, and your game's jumps of the time of day and changes of era |
+| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines, the progress your game shares, the small keys you pick up and use, the enemies you hit and kill, the story cutscenes you start, and your game's jumps of the time of day and changes of era |
 | Your Steam friends | that you play Spacewar, and the room (they may join it) |
 | Valve | what Steam sees of any game that uses its lobbies and network: who is in which lobby, and the traffic's size and timing. Steam encrypts the traffic between the games |
 | Your log (`logs/nx2navi.log`) and "Copy system info" | that a room was made or joined, the other players' Steam names, and the lines below; never a room ID or a Steam id. Steam's library prints lines of its own, one with your Steam id, to the console the game was started from; they are not in the log file, but they are in a file you redirect the game's output to yourself |
@@ -191,6 +197,7 @@ teleports them then.
 |---|---|---|
 | `coop_steam` | `0` | on or off, at once. On: the game signs in to Steam; off: no network. The other players' Links need a game started with it on (the Co-op puppets mod, above). (`coop`, the switch of the co-op of versions up to 0.9.2, does nothing: a line of it left in a file turns nothing on) |
 | `coop_share` | `1` | in a room, share progress, items and songs (above) |
+| `coop_keys` | `pool` | in a room with `coop_share` on, one count of small keys per dungeon for the whole room, kept by the room's host (above); `own`: each player's keys are their own |
 | `coop_names` | `1` | show each other player's name above their Link, in their colour |
 | `coop_colour` | `auto` | the colour you pick (above, "Colours") |
 | `coop_chat` | `1` | show new chat lines, and who joined or left, over the game for a few seconds while the menu is closed |
@@ -212,9 +219,9 @@ happens: `coop: ext:` (the room's players by seat: `seat 2 'name' is in the room
 colours: ...`), `coop: puppet:` (`seat 1 'name' is in <area>: asking for CoopPuppet_Child`, the Link `made after N
 frames`, its gear), `coop: tags:`, `coop: kill:`, `coop: damage:` and `coop: scale:` (`2 players (...): enemy health
 x1.50, damage to Link x1.25`), `coop: cutscene:` (`following the scene '<event>' of seat 1 'name'`, `teleporting from
-... to ...`; `time:` lines for the time of day), `coop: era:`, `coop: dialog:` and `coop: events:` (the event table
-it reads). A player of the room is named by seat and Steam name, never by id. Lines about what another player sent
-are a few a second for each player at most, and a line says how many were left out.
+... to ...`; `time:` lines for the time of day), `coop: era:`, `coop: dialog:`, `coop: events:` (the event table it
+reads) and `coop: keys:`. A player of the room is named by seat and Steam name, never by id. Lines about what another
+player sent are a few a second for each player at most, and a line says how many were left out.
 
 ## How it works
 
@@ -256,10 +263,15 @@ their tables of what is shared are the same (a sum over the table travels with e
 the era are out of the table unless `coop_dialog` or `coop_era` is `shared`.
 
 **The host's part.** It decides who is in the room, and it keeps what has to be one value for the room: the colours,
-the time of day and the era, each sent at once to a player who comes and again at times, so that a new host carries on
-from what it last had. Progress has no arbiter, because every shared value only ever rises: two games that set the
-same flag agree whatever the order. A jump of the time or a change of era carries an order that each one makes one
-higher, so the newest wins in every game, and an order far from the room's is taken from the host alone.
+the time of day, the era and the small keys, each sent at once to a player who comes and again at times, so that a new
+host carries on from what it last had. Progress has no arbiter, because every shared value only ever rises: two games
+that set the same flag agree whatever the order. A jump of the time or a change of era carries an order that each one
+makes one higher, so the newest wins in every game, and an order far from the room's is taken from the host alone.
+The small keys are counted one key a door: each key a player picks up or uses goes to the host with the place where
+their Link stood, and a key used within 3.4 m of where the room already paid one, in the same dungeon, opened that
+door again in another world, so the host takes it without counting it, and its next counts give that player the key
+back. The doors with small-key locks stand at least 6.8 m apart in every dungeon. A new host starts with no such
+places.
 
 ## Checks
 
@@ -287,7 +299,7 @@ higher, so the newest wins in every game, and an order far from the room's is ta
 - Test hooks, from the environment or `nx2navi.ini`, logged at the start: `NX2NAVI_COOP_PUPPET_TEST=shadow` (a puppet
   that copies this game's own Link, beside him), `NX2NAVI_COOP_KILL_TEST` (hits and kills as the player's own, or as
   another player's), `NX2NAVI_COOP_CUTSCENE_TEST` (a scene started, a time of day set, a teleport) and the debug tools'
-  `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`); the header comments of `coop_puppet.c`, `coop_kill.c`,
+  `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`, `smallkey`); the header comments of `coop_puppet.c`, `coop_kill.c`,
   `coop_cutscene.c` and `debug_tools.c` give their forms.
 - `NX2NAVI_MENU_TEST_SET=<frame>:COOP_DO=create | leave | join:<room id> | chat:<text> | page:join | page:invite |
   page:chat | page:leave` (environment only) does what the Co-op tab's row or window does.
