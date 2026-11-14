@@ -35,6 +35,8 @@
 // Remote players: each game sends its Link's pose and what he wears and holds to the room (PUPPET and GEAR,
 // coop_ext_wire.h), so that the other players' puppets get gear and arms as the shadow test's does (section "the
 // other players"). NX2NAVI_COOP_PUPPET_TEST=spike|shadow are the one-game tests.
+// Kills, shared damage and difficulty live in coop_kill.c: this file's frame hook hands it the area and Link
+// (coop_kill_frame), and its present switch runs it (coop_kill_present) and keeps the hook on while it needs it.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +48,7 @@
 #include "coop_ext.h"
 #include "coop_ext_wire.h"
 #include "coop_game.h"
+#include "coop_kill.h"
 #include "coop_puppet.h"
 #include "coop_tags.h"
 #include "fs.h"
@@ -1464,6 +1467,27 @@ static void on_view(const CoopExtView *v, void *user) {
     N.others = others, N.self = v->self, N.in_room = v->in_room;
 }
 
+// Kills and difficulty (coop_kill.c, any thread): the other players of the room whose Link is in the game world now
+// (coop_ext.h: their last pose names an area and is fresh).
+int coop_puppet_world_others(void) {
+    CoopExtView v;
+    coop_ext_view(&v);
+    int n = 0;
+    for (int s = 1; s <= COOP_PLAYERS; s++) n += v.seat[s].id && !v.seat[s].self && v.seat[s].in_world;
+    return n;
+}
+
+// Kills tests (coop_kill.c, any thread): the other players whose Link is in the game world in this area.
+int coop_puppet_area_others(const char *area) {
+    if (!area || !area[0]) return 0;
+    CoopExtView v;
+    coop_ext_view(&v);
+    int n = 0;
+    for (int s = 1; s <= COOP_PLAYERS; s++)
+        n += v.seat[s].id && !v.seat[s].self && v.seat[s].in_world && !strcmp(v.seat[s].area, area);
+    return n;
+}
+
 static float lerp_angle(float a, float b, float t) {
     float d = fmodf(b - a + 3.14159265f, 6.28318531f);
     if (d < 0) d += 6.28318531f;
@@ -2365,6 +2389,7 @@ static void puppet_frame(Cpu *c) {
         if (P.test == 1) spike(c, player);
         if (P.test == 2) shadow(c, player);
     }
+    coop_kill_frame(c, player, area);   // kills, shared damage, difficulty (coop_kill.c): the area and Link's life component
     // the other players: their puppets, and this Link's PUPPET and GEAR while others are in the room
     if (N.others || N.alive) remotes(c, player, area);
     colour_frame(c, player);
@@ -2422,7 +2447,9 @@ void coop_puppet_present(void) {
     }
     // on while others are in the room (their puppets, this Link's PUPPET and GEAR) or puppets are to be removed, or the
     // local Link has a colour (or still carries one); off (the original call) otherwise
-    int want = P.test != 0 || N.others || N.alive || colour_own() != COL_NONE || CL.dirty;
+    // ... and while kills, shared damage or difficulty need the area and Link from it (coop_kill.c)
+    int kills = coop_kill_present();
+    int want = P.test != 0 || N.others || N.alive || colour_own() != COL_NONE || CL.dirty || kills;
     if (want != P.want) {
         P.want = want;
         rt_patch_switch(P.set, want);
@@ -2436,6 +2463,7 @@ void coop_puppet_init(void) {
     coop_ext_on_message(COOP_K_PUPPET, on_puppet, NULL);
     coop_ext_on_message(COOP_K_GEAR, on_gear, NULL);
     coop_ext_on_view(on_view, NULL);
+    coop_kill_init();   // kills, shared damage, difficulty (coop_kill.c): its messages and hooks on the co-op thread
 }
 
 __attribute__((constructor)) static void puppet_register(void) {
@@ -2447,4 +2475,9 @@ __attribute__((constructor)) static void puppet_register(void) {
 #else
 void coop_puppet_present(void) {}
 void coop_puppet_init(void) {}
+int coop_puppet_world_others(void) { return 0; }
+int coop_puppet_area_others(const char *area) {
+    (void)area;
+    return 0;
+}
 #endif

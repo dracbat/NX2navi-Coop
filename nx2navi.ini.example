@@ -846,6 +846,15 @@
 # puppets mod the launcher makes. 0 = not shown in your game; yours is still shown in theirs.
 # coop_puppets = 1
 # coop_puppet_gear = 1
+# A placed enemy one player kills dies in every world of that area (coop_kills), and each player's hits on it count in
+# every world (coop_damage). A boss keeps its killing blow in each world: lethal shares that too, 0 shares nothing.
+# coop_kills = 1
+# coop_damage = 1
+# coop_damage_boss = safe
+# Enemy health and the damage Link takes by the number of players in the game world, for 1 to 4 players (0 = off).
+# coop_scale = 1
+# coop_scale_hp = 1,1.5,2,2.5
+# coop_scale_taken = 1,1.25,1.5,1.75
 
 [audio]
 # none mixes without opening an audio device.

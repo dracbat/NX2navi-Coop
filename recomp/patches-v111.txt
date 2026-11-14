@@ -374,3 +374,16 @@ site text_speed main afe1d8 bd404e61 bd404e61 @page:x22 f94102db cb13037b dac013
 set coop_puppet NX2NAVI_COOP_PUPPET_HOOK  0
 site coop_puppet main 6e6dd8 94d19d4a 951ee68a   # bl main+0x3b4e300 -> page+0x800
 site coop_puppet main 6e70f8 94d19c82 951ee5c2   # the same call on the update's other path (bit 1 of update +0xd38)
+
+# Co-op kills, shared damage and difficulty (runtime/coop_kill.c): the life component's update (main+0x49d8c0, called
+# by the GameActor update main+0x2c1d740 with *(*(actor+0x270)+0x2b8) for every GameActor: enemies, bosses and Link)
+# adds the update's damage terms here: w9 the selected hit (comp+0x1350; 0 on the kill override), w10 term 2 plus the
+# pending life request (MaxLife on the kill override). The add goes to the host function on the patch page (+0x810),
+# which does it with the hit (w9 and term 2) scaled for the players present (divided by the health factor for enemies,
+# with a carry per component; multiplied by the damage factor for Link), plus the hits the other players dealt to the
+# same placed enemy, and lethal damage to an enemy another player killed. The request's part and the kill override are
+# never scaled, so instant kills and scripted life changes stay as they are. Only w9 changes; add and bl write no
+# flags; x30 is the function's own saved one. Switched on only while there is work for it (a room with others, a
+# forced player count, a test).
+set coop_life NX2NAVI_COOP_LIFE_HOOK 0
+site coop_life main 49dcb0 0b090149 95280ad8   # add w9, w10, w9 -> bl page+0x810
