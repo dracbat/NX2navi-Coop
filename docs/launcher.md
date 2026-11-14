@@ -188,7 +188,19 @@ the compiler, the linker and `tar` would not take it.
    follows the game's own counts, printed every 2 s: the translation fills the first half, the build into the
    driver's cache the second. An update every 10 s keeps the step's text current while nothing is printed, and after
    3 minutes without a count moving it says so, and that the step is still running.
-4. **Draw the Button Prompts**, only when the version holds button art (`app/<version>/prompt-art`, a release made
+4. **Make the Co-op Players**, only when the version holds the puppet tool (`app/<version>/tools/make_puppet_mod.py`;
+   `jobs.coop_rows`): make_game.py's coop step runs it on the packed RomFS image and writes the Link the other players
+   of a co-op room are shown as (runtime/coop_puppet.c) into `mods/Co-op puppets`, a mod of the launcher's own as the
+   stand-ins below are, which the Mods screen shows as such. It adds the Link's two actor packs and replaces two of
+   the game's actor tables, `RSDB/ActorInfo` and `RSDB/GameActorInfo`, with copies that list it, and its resource size
+   table covers the new files. The game loads that mod only when it starts with co-op on (runtime/mods.h
+   `MODS_COOP_PUPPETS`), so a game that does not play co-op loads none of it; the step makes it at every build all the
+   same, so that a player who turns co-op on has it at the next start. Its key names the game files, the tool's
+   version (`make_game.py` `COOP_TOOL`, changed by hand when a change to the tool changes what it writes) and whether
+   every file it writes is still there, so it runs again only when one changed or a file is gone, and runs no other
+   step again. A failure does not stop the build: the row says Not Made, the game runs without the other players'
+   Links, and the next build tries again. `NX2NAVI_COOP_PUPPET_MOD=0` in the launcher's environment skips it.
+5. **Draw the Button Prompts**, only when the version holds button art (`app/<version>/prompt-art`, a release made
    with `--prompt-art`; `build.has_prompt_art`): make_game.py's last step runs `tools/pad_prompts.py` on that art
    and writes the Xbox, PlayStation, Steam Deck and keyboard and mouse prompts into `romfs-patches-*` beside the game (about
    30 s), which the game's Controls > Button prompts loads. The keyboard and mouse prompts show the keys of
@@ -197,7 +209,7 @@ the compiler, the linker and `tar` would not take it.
    by hand when a change to them changes what they write: an edit of a script alone does not draw the prompts
    again), so it runs again only when one changed or a folder is gone, and runs no other step again. Without art
    the row is not shown and the game keeps its own prompts.
-5. **Check the Game Files**: make_game.py's last step runs `tools/romfs_check.py`, once for each copy of the game data
+6. **Check the Game Files**: make_game.py's last step runs `tools/romfs_check.py`, once for each copy of the game data
    (about 4 minutes on players' PCs up to 0.7.1, in worker threads, never while the game runs; its key holds the
    check's version, `SCAN_TOOL`, in the same way). It decompresses every file, writes
    `romfs-check.json` beside the game, and for each damaged texture puts a stand-in, another texture of the same kind
@@ -207,7 +219,7 @@ the compiler, the linker and `tar` would not take it.
    the count in the step's row ("4 Flagged, 3 Stand-Ins"), and after a job in which the check ran a sentence on the
    home screen and in `launcher.log`. The four files the check flags on every copy of the game (`jobs.SCAN_EXPECTED`)
    are told as that, with nothing for the player to do; other files are counted and `romfs-check.json` named.
-6. The game's Cetra Display is decoded for the window.
+7. The game's Cetra Display is decoded for the window.
 
 ## Updating
 
@@ -561,7 +573,9 @@ on a synthetic
 `.nup` (events, skipped steps, `--rebuild` without the dump, step keys, the shaders key following the translator the
 build uses), the RomFS step beside the lift and compile
 and its failure stopping the build, the prompts step with a stand-in prompt tool (when it runs again, and that it
-makes no other step run), the button art a release copies and the packages and tools the prompts need in a release,
+makes no other step run), the coop step with a stand-in puppet tool (when it runs again, that it makes no other step
+run, and a failure that leaves the build going and is tried again), the button art a release copies and the packages
+and tools the prompts need in a release,
 the compile step's object cache with the system's C compiler and its
 largest-first order, its windres call under folders with spaces in their names, CLANG64's clang in the lock and the
 install, the save import (the account folder, the save folders it recognises, backup, the commit journal, the saves
