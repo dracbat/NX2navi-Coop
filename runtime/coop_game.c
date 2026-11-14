@@ -218,7 +218,8 @@ static struct {
 // values (they wait in the flags' wanted values); running is the gate of the last present; save_serial moves whenever
 // the title screen comes back (another save may be played next).
 static volatile int32_t hold, running, save_serial;
-// For the time of day (coop_cutscene.c): moves at each load the gate sees and with save_serial.
+// For the time of day and the small keys (coop_cutscene.c, coop_keys.c): moves at each load the gate sees and with
+// save_serial.
 static volatile int32_t load_serial;
 // For the puppets and the time of day: the gate opened since the title screen last came back (coop_game_played).
 static volatile int32_t played;

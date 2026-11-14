@@ -301,6 +301,8 @@ typedef enum {
     // the colour this player picks in a room, and the colours' names (ui/coop_page.cpp, coop_colours.c)
     UI_MENU_COOP_COLOUR, UI_MENU_COOP_COLOUR_DESC, UI_MENU_COOP_COLOUR_AUTO, UI_MENU_COOP_COLOUR_GREEN,
     UI_MENU_COOP_COLOUR_RED, UI_MENU_COOP_COLOUR_BLUE, UI_MENU_COOP_COLOUR_PURPLE,
+    // the room's small keys, one count per dungeon kept by the room's host, or each player's own (coop_keys.c)
+    UI_MENU_COOP_KEYS, UI_MENU_COOP_KEYS_DESC,
     // the note after F8 (bugcap.c, ui/menu.cpp capture_note): "%d" the capture's number, "%s" its folder's name
     UI_MENU_CAPTURE_SAVED, UI_MENU_CAPTURE_FOLDER, UI_MENU_CAPTURE_FAILED,
     UI_MENU_LAST_ID = UI_MENU_CAPTURE_FAILED,

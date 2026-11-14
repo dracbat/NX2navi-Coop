@@ -52,6 +52,7 @@
 #include "coop_colours.h"
 #include "coop_ext.h"
 #include "coop_game.h"
+#include "coop_keys.h"
 #include "coop_puppet.h"
 #include "host.h"
 #include "logq.h"
@@ -741,6 +742,7 @@ static int main_run(int argc, char **argv) {
         coop_game_init(); // co-op's game side (coop_game.c), before the thread that hands it messages
         coop_ext_init();  // the glue of the co-op modules (coop_ext.c), before they register with it
         coop_colours_init(); // the players' colours in a room (coop_colours.c), before the thread that hands them messages
+        coop_keys_init();    // the room's small keys (coop_keys.c), the same
         coop_puppet_init(); // the other players' Links (coop_puppet.c), before the thread that hands them messages
         coop_init();      // the co-op thread (coop.c); the same, idle while the COOP setting is off
         rt_boot();

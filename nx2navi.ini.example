@@ -829,8 +829,11 @@
 # 0 = off, the game uses no network. Takes effect at once.
 # coop_steam = 0
 # In a room, share progress, items and songs with the other players; your save is copied to coop-backup in the profile
-# folder first. 0 = no progress; the rest below still goes.
+# folder first. 0 = no progress and no shared small keys; the rest below still goes.
 # coop_share = 1
+# Small keys in a room with coop_share on: pool, one count per dungeon for the whole room, kept by the room's host (a key
+# anyone picks up is everyone's, and a locked door anyone opens uses up a key for everyone); own, each player's own.
+# coop_keys = pool
 # Show each other player's name above their Link, in their colour (needs coop_puppets on).
 # coop_names = 1
 # Show new chat lines, and who joined or left, over the game while the menu is closed.

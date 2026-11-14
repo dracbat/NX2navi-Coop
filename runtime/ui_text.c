@@ -752,8 +752,8 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_SHARE] = "Share progress",
     [UI_MENU_COOP_SHARE_DESC] = "In a room, what anyone achieves counts for everyone: story progress, chests, doors, items and "
                                 "songs. Before anything from a room reaches your save, the save is copied to coop-backup in the "
-                                "profile folder. Small keys, rupees, ammunition and hearts stay your own. Off: only names and "
-                                "chat are shared.",
+                                "profile folder. Rupees, ammunition and hearts stay your own; small keys are the room's unless "
+                                "Shared small keys is off. Off: only names and chat are shared.",
     [UI_MENU_COOP_NAMES] = "Show player names",
     [UI_MENU_COOP_NAMES_DESC] = "Shows the name of each other player above their Link in your world, in their colour.",
     [UI_MENU_COOP_CHAT_SHOW] = "Show chat over the game",
@@ -779,6 +779,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_COLOUR_RED] = "Red",
     [UI_MENU_COOP_COLOUR_BLUE] = "Blue",
     [UI_MENU_COOP_COLOUR_PURPLE] = "Purple",
+    [UI_MENU_COOP_KEYS] = "Shared small keys",
+    [UI_MENU_COOP_KEYS_DESC] = "With Share progress on, a room has one count of small keys for each dungeon: a key anyone "
+                               "picks up is everyone's, and a locked door anyone opens uses up a key for everyone. The room's "
+                               "host keeps the counts, and a player who joins takes them. Off: your small keys stay your own.",
     [UI_MENU_CAPTURE_SAVED] = "Bug capture %d saved",
     [UI_MENU_CAPTURE_FOLDER] = "Folder: %s",
     [UI_MENU_CAPTURE_FAILED] = "Bug capture %d could not be saved",
@@ -1456,8 +1460,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_SHARE] = "Общий прогресс",
     [UI_MENU_COOP_SHARE_DESC] = "В комнате достижения любого игрока засчитываются всем: сюжет, сундуки, двери, предметы и песни. "
                                 "Прежде чем что-либо из комнаты попадёт в ваше сохранение, оно копируется в coop-backup в папке "
-                                "профиля. Малые ключи, рупии, боеприпасы и сердца остаются вашими. Выкл.: общими остаются только "
-                                "имена и чат.",
+                                "профиля. Рупии, боеприпасы и сердца остаются вашими; малые ключи общие для комнаты, если не "
+                                "выключены «Общие малые ключи». Выкл.: общими остаются только имена и чат.",
     [UI_MENU_COOP_NAMES] = "Показывать имена игроков",
     [UI_MENU_COOP_NAMES_DESC] = "Показывает имена других игроков над их Линками в вашем мире, цветом каждого игрока.",
     [UI_MENU_COOP_CHAT_SHOW] = "Показывать чат поверх игры",
@@ -1484,6 +1488,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_COLOUR_RED] = "Красный",
     [UI_MENU_COOP_COLOUR_BLUE] = "Синий",
     [UI_MENU_COOP_COLOUR_PURPLE] = "Фиолетовый",
+    [UI_MENU_COOP_KEYS] = "Общие малые ключи",
+    [UI_MENU_COOP_KEYS_DESC] = "При включённом «Общем прогрессе» у комнаты один счёт малых ключей для каждого подземелья: ключ, "
+                               "найденный любым игроком, есть у всех, а запертая дверь, открытая любым игроком, тратит ключ у "
+                               "всех. Счёт ведёт хост комнаты, и вошедший игрок получает его. Выкл.: ваши малые ключи остаются "
+                               "вашими.",
     [UI_MENU_CAPTURE_SAVED] = "Снимок ошибки %d сохранён",
     [UI_MENU_CAPTURE_FOLDER] = "Папка: %s",
     [UI_MENU_CAPTURE_FAILED] = "Снимок ошибки %d не удалось сохранить",
@@ -2134,8 +2143,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_SHARE] = "Compartilhar progresso",
     [UI_MENU_COOP_SHARE_DESC] = "Em uma sala, o que qualquer um conquista vale para todos: história, baús, portas, itens e "
                                 "canções. Antes de algo da sala chegar ao seu save, ele é copiado para coop-backup na pasta do "
-                                "perfil. Chaves pequenas, rupias, munição e corações continuam seus. Desligado: só nomes e chat "
-                                "são compartilhados.",
+                                "perfil. Rupias, munição e corações continuam seus; as chaves pequenas são da sala, a menos que "
+                                "Chaves pequenas compartilhadas esteja desligado. Desligado: só nomes e chat são compartilhados.",
     [UI_MENU_COOP_NAMES] = "Mostrar nomes dos jogadores",
     [UI_MENU_COOP_NAMES_DESC] = "Mostra o nome de cada outro jogador acima do Link dele no seu mundo, na cor desse jogador.",
     [UI_MENU_COOP_CHAT_SHOW] = "Mostrar o chat sobre o jogo",
@@ -2161,6 +2170,11 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_COLOUR_RED] = "Vermelho",
     [UI_MENU_COOP_COLOUR_BLUE] = "Azul",
     [UI_MENU_COOP_COLOUR_PURPLE] = "Roxo",
+    [UI_MENU_COOP_KEYS] = "Chaves pequenas compartilhadas",
+    [UI_MENU_COOP_KEYS_DESC] = "Com Compartilhar progresso ligado, a sala tem uma só contagem de chaves pequenas para cada "
+                               "masmorra: uma chave que qualquer um pega é de todos, e uma porta trancada que qualquer um abre "
+                               "gasta uma chave de todos. O anfitrião da sala guarda as contagens, e quem entra na sala recebe "
+                               "essas contagens. Desligado: suas chaves pequenas continuam suas.",
     [UI_MENU_CAPTURE_SAVED] = "Captura de bug %d salva",
     [UI_MENU_CAPTURE_FOLDER] = "Pasta: %s",
     [UI_MENU_CAPTURE_FAILED] = "Não foi possível salvar a captura de bug %d",
@@ -2887,7 +2901,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_SETTINGS] = "合作设置",
     [UI_MENU_COOP_SHARE] = "共享进度",
     [UI_MENU_COOP_SHARE_DESC] = "在房间里，任何人取得的进展都算作所有人的：剧情、宝箱、门、道具和乐曲。在房间里的任何内容写入你的存档之前，存档会先复制到配置文件夹里的 "
-                                "coop-backup。小钥匙、卢比、弹药和心保持各自独立。关闭：只共享名字和聊天。",
+                                "coop-backup。卢比、弹药和心保持各自独立；除非关闭“共享小钥匙”，小钥匙由房间共用。关闭：只共享名字和聊天。",
     [UI_MENU_COOP_NAMES] = "显示玩家名字",
     [UI_MENU_COOP_NAMES_DESC] = "在你的世界里，在其他玩家的林克上方以其颜色显示名字。",
     [UI_MENU_COOP_CHAT_SHOW] = "在游戏画面上显示聊天",
@@ -2912,6 +2926,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_COLOUR_RED] = "红色",
     [UI_MENU_COOP_COLOUR_BLUE] = "蓝色",
     [UI_MENU_COOP_COLOUR_PURPLE] = "紫色",
+    [UI_MENU_COOP_KEYS] = "共享小钥匙",
+    [UI_MENU_COOP_KEYS_DESC] = "开启“共享进度”时，房间里每个地下城的小钥匙只有一个共同的数量：任何人捡到的钥匙归所有人，任何人打开"
+                               "上锁的门都会用掉所有人的一把钥匙。数量由房主保管，加入的玩家会得到这些数量。关闭：你的小钥匙归你自己。",
     [UI_MENU_CAPTURE_SAVED] = "错误快照 %d 已保存",
     [UI_MENU_CAPTURE_FOLDER] = "文件夹：%s",
     [UI_MENU_CAPTURE_FAILED] = "错误快照 %d 无法保存",
