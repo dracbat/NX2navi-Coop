@@ -44,6 +44,7 @@ MOD_TOP = {'romfs', 'romfslite', 'exefs', 'cheats', 'atmosphere', 'contents', mo
 UNWRAP_DEPTH = 4
 UNNAMED = 'Unnamed mod'
 STAND_INS = 'Damaged file stand-ins'   # the launcher's own (tools/romfs_check.py), shown as such
+COOP_PUPPETS = 'Co-op puppets'   # the launcher's own too (tools/make_puppet_mod.py, the build's coop step)
 TITLE_ID = re.compile(r'^[0-9A-Fa-f]{16}$')
 
 

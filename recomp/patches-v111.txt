@@ -363,3 +363,14 @@ site sprint main c07f3c 39400108 39400108 950a63fd   # ldrb w8, [x8] -> ldrb w8,
 set text_speed NX2NAVI_TEXT_SPEED_PATCH 1
 site text_speed main 774b74 36000074 @page:x9 394d2a6a d100054a 8a0a010a f901012a 39483129 2a140129 36000069   # tbz w20, #0, #0x774b80 -> adrp x9, page; ldrb w10, [x19, #0x34a]; sub x10, x10, #1; and x10, x8, x10; str x10, [x9, #0x200]; ldrb w9, [x9, #0x20c]; orr w9, w9, w20; tbz w9, #0, #0x774b80
 site text_speed main afe1d8 bd404e61 bd404e61 @page:x22 f94102db cb13037b dac0137b d346ff7b 9e220362 bd420ac8 1e280842 1f020421   # ldr s1, [x19, #0x4c]; adrp x22, page; ldr x27, [x22, #0x200]; sub x27, x27, x19; clz x27, x27; lsr x27, x27, #6; scvtf s2, x27; ldr s8, [x22, #0x208]; fmul s2, s2, s8; fmadd s1, s1, s2, s1
+
+# The co-op sets' host functions sit in the middle of the patch page, from +0x800 on: the sets above lay out their data
+# from +0 and their host functions from +0xff0 down, so neither reaches these slots soon.
+#
+# Co-op puppets (runtime/coop_puppet.c): the framework's per-frame update (main+0x6e6be0) steps the time manager
+# through main+0x3b4e300 (x0 the manager, s0 the frame step) before it updates the scene. The call goes to the host
+# function on the patch page (+0x800), which makes it and then spawns, poses and removes the other players' puppets on
+# the game's update thread, between two frames. Switched on only while there is puppet work (rt_patch_switch).
+set coop_puppet NX2NAVI_COOP_PUPPET_HOOK  0
+site coop_puppet main 6e6dd8 94d19d4a 951ee68a   # bl main+0x3b4e300 -> page+0x800
+site coop_puppet main 6e70f8 94d19c82 951ee5c2   # the same call on the update's other path (bit 1 of update +0xd38)

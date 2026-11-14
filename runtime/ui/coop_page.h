@@ -17,8 +17,8 @@ void coop_cancel(void);
 // button does. 1 when key is one of them.
 int coop_test_set(const char *key, const char *value);
 
-// Over the game, menu open or not: the other players' names where they stand, and while the menu is closed the chat's
-// new lines and an invite that waits. coop_overlay_tick on every overlay frame (it costs a copy of the co-op view while
-// co-op is on): true while there is something to draw. coop_overlay_draw draws into a w x h frame.
+// Over the game while the menu is closed: the chat's new lines and an invite that waits (the other players' names are
+// the name tags', coop_tags.h). coop_overlay_tick on every overlay frame (it costs a copy of the co-op view while co-op
+// is on): true while there is something to draw. coop_overlay_draw draws into a w x h frame.
 bool coop_overlay_tick(void);
 void coop_overlay_draw(float w, float h, float scale, bool menu_open);

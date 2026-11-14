@@ -49,8 +49,10 @@
 
 #include "cfg.h"
 #include "coop.h"
+#include "coop_colours.h"
 #include "coop_ext.h"
 #include "coop_game.h"
+#include "coop_puppet.h"
 #include "host.h"
 #include "logq.h"
 #include "prof.h"
@@ -738,6 +740,8 @@ static int main_run(int argc, char **argv) {
         discord_init();   // the Rich Presence thread (discord_rpc.c); it reads nx2navi.ini itself and idles while off
         coop_game_init(); // co-op's game side (coop_game.c), before the thread that hands it messages
         coop_ext_init();  // the glue of the co-op modules (coop_ext.c), before they register with it
+        coop_colours_init(); // the players' colours in a room (coop_colours.c), before the thread that hands them messages
+        coop_puppet_init(); // the other players' Links (coop_puppet.c), before the thread that hands them messages
         coop_init();      // the co-op thread (coop.c); the same, idle while the COOP setting is off
         rt_boot();
         return 0;

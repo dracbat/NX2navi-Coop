@@ -1604,6 +1604,26 @@ for name in prompt_art.OVERLAYS:
 print(json.dumps({'status': 'pass', 'folders': []}))
 '''
 
+# Stands in for tools/make_puppet_mod.py: counts its runs in the game folder and writes the files of the co-op
+# players' mod folder; with puppet-fails in the game folder it fails as the real tool does on game files it cannot use.
+FAKE_PUPPET_TOOL = r'''
+import sys
+from pathlib import Path
+a = sys.argv[1:]
+game = Path(a[a.index('--game') + 1])
+if (game / 'puppet-fails').exists():
+    sys.exit('make_puppet_mod: the game files lack Pack/Actor/PouchPlayer_Child.pack.zs')
+with open(game / 'puppet-runs.txt', 'a') as f:
+    f.write('run\n')
+for rel in ('Pack/Actor/CoopPuppet_Child.pack.zs', 'Pack/Actor/CoopPuppet_Adult.pack.zs',
+            'RSDB/ActorInfo.Product.111.rstbl.byml.zs', 'RSDB/GameActorInfo.Product.111.rstbl.byml.zs',
+            'System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs'):
+    p = game / 'mods' / 'Co-op puppets' / 'romfs' / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b'made')
+print('Co-op puppets: 5 files')
+'''
+
 
 def prepared_list(programs, answers, translator, records=1):
     """A version 2 shader-prepared.bin (runtime/prp_file.h): the head, what it was prepared from, then records."""
@@ -2169,6 +2189,85 @@ class MakeGameTest(Tmp):
             shutil.rmtree(kit / 'prompt-art')
             self.assertEqual(build(), ([], [{'ev': 'step', 'step': 'prompts', 'state': 'skip'}], 4))
             self.assertTrue((self.out / 'romfs-patches-xbox' / 'manifest.tsv').is_file())
+
+    def test_coop_step(self):
+        """With the puppet tool in the kit (a stand-in tools/make_puppet_mod.py), the build makes the co-op players'
+        mod folder after the shaders. It runs again only when one of its files is gone, and then no other step runs;
+        a step before it that runs does not make it run. A failure does not stop the build: the step shows as Not
+        Made, is not recorded, and the next build tries again. NX2NAVI_COOP_PUPPET_MOD=0 and a kit without the tool
+        skip it."""
+        from unittest import mock
+        kit = self.tmp / 'kit'
+        (kit / 'tools').mkdir(parents=True)
+        (kit / 'bin').mkdir()
+        (kit / 'bin' / self.mg.XLATE_NAME).write_bytes(b'')   # the translator the shaders key names (xlate_source)
+        (kit / 'bin' / 'nx2navi_xlate.id').write_text('xlate 1\n')
+        (kit / 'tools' / 'prepare_shaders.py').write_text('')
+        (kit / 'tools' / 'make_puppet_mod.py').write_text(FAKE_PUPPET_TOOL)
+        mod = self.out / 'mods' / self.mg.COOP_MOD / 'romfs'
+        ran = []
+
+        def fake(name):
+            def step(*args, **kw):
+                ran.append(name)
+            return step
+
+        def build():
+            """One build; (the other steps that ran, the coop step's events, the puppet tool's runs so far)."""
+            ran.clear()
+            buf = io.StringIO()
+            argv = ['make_game.py', '--nup', str(self.nup), '--out', str(self.out), '--msys', str(self.msys),
+                    '--events']
+            with mock.patch.object(sys, 'argv', argv), contextlib.redirect_stdout(buf), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.mg.main()
+            events = [json.loads(ln[2:]) for ln in buf.getvalue().splitlines() if ln.startswith('@@')]
+            log = self.out / 'puppet-runs.txt'
+            runs = log.read_text().count('run') if log.exists() else 0
+            return sorted(ran), [e for e in events if e.get('step') == 'coop' and e['ev'] == 'step'], runs
+
+        def states(events):
+            return [e['state'] for e in events]
+
+        def recorded():
+            return 'coop' in json.loads((self.out / 'build-cache' / 'state.json').read_text())['steps']
+
+        skip = [{'ev': 'step', 'step': 'coop', 'state': 'skip'}]
+        sys.path.insert(0, str(self.layout.pydeps))   # the fake zbic
+        self.addCleanup(sys.path.remove, str(self.layout.pydeps))
+        with mock.patch.multiple(self.mg, KIT=kit, PROMPT_PACKAGES={}, EVENTS=False, step_lift=fake('lift'),
+                                 step_compile=fake('compile'), step_shaders=fake('shaders'), step_scan=fake('scan')):
+            others, ev, runs = build()
+            self.assertEqual((others, states(ev), runs), (['compile', 'lift', 'scan', 'shaders'], ['start', 'done'], 1))
+            self.assertTrue(all((mod / f).is_file() for f in self.mg.COOP_FILES) and recorded())
+            self.assertEqual(build(), ([], skip, 1))
+            # a file gone: made again, and nothing else runs
+            (mod / self.mg.COOP_FILES[2]).unlink()
+            others, ev, runs = build()
+            self.assertEqual((others, states(ev), runs), ([], ['start', 'done'], 2))
+            # the lift running again makes the compile run, not the coop step (its key names what it reads)
+            st = json.loads((self.out / 'build-cache' / 'state.json').read_text())
+            del st['steps']['lift']
+            (self.out / 'build-cache' / 'state.json').write_text(json.dumps(st))
+            self.assertEqual(build(), (['compile', 'lift'], skip, 2))
+            # a failure: the build goes on, the row says Not Made, nothing is recorded, the next build tries again
+            (self.out / 'puppet-fails').write_text('')
+            (mod / self.mg.COOP_FILES[0]).unlink()
+            others, ev, runs = build()
+            self.assertEqual((others, ev[-1], runs),
+                             ([], {'ev': 'step', 'step': 'coop', 'state': 'skip', 'value': 'Not Made'}, 2))
+            self.assertFalse(recorded())
+            (self.out / 'puppet-fails').unlink()
+            others, ev, runs = build()
+            self.assertEqual((others, states(ev), runs), ([], ['start', 'done'], 3))
+            self.assertTrue(recorded())
+            # switched off for a build, or a kit without the tool: skipped, the files an earlier build made stay
+            (mod / self.mg.COOP_FILES[1]).unlink()
+            with mock.patch.dict(os.environ, {'NX2NAVI_COOP_PUPPET_MOD': '0'}):
+                self.assertEqual(build(), ([], skip, 3))
+            (kit / 'tools' / 'make_puppet_mod.py').unlink()
+            self.assertEqual(build(), ([], skip, 3))
+            self.assertTrue((mod / self.mg.COOP_FILES[0]).is_file())
 
     def test_an_update_keeps_the_settings_file(self):
         """The rebuild an update ends with (make_game.py --rebuild under a newer kit: the lift, the compile, the
@@ -3630,6 +3729,8 @@ for s in ('check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'prompts') + 
         ev(ev='progress', step=s, done=5, total=10, unit='files'); ev(ev='phase', step=s, phase='link')
     print('working on', s, flush=True)
     ev(ev='step', step=s, state='done', seconds=0.1)
+if '--coop-fails' in mode:   # the coop step failing, which does not stop the build
+    ev(ev='step', step='coop', state='start'); ev(ev='step', step='coop', state='skip', value='Not Made')
 ev(ev='end', exe='x')
 '''
 
@@ -3663,6 +3764,21 @@ class JobTest(Tmp):
         self.assertTrue(any('working on lift' in ln for ln in j.lines))
         self.assertEqual(j.overall(), 1.0)
         self.assertIsNone(j.step('prompts'))   # a version without button art draws no prompts: no row
+        self.assertIsNone(j.step('coop'))      # nor one without the puppet tool the co-op players
+
+    def test_install_job_with_the_puppet_tool(self):
+        """A version with the puppet tool shows the coop step as a row of its own, after the shaders. A coop step
+        that fails shows Not Made, and the install still ends well: the game runs without the other players' Links."""
+        self.patch_tools()
+        ctx = self.make_ctx('ok --coop-fails')
+        (ctx.layout.app / 'tools' / 'make_puppet_mod.py').write_text('')
+        j = jobs.InstallJob(ctx, self.tmp / 'g.nup', self.tmp / 'game')
+        self.assertEqual([s.id for s in j.steps][-4:], ['shaders', 'coop', 'scan', 'ready'])
+        j.run_inline()
+        self.assertEqual(j.result, 'ok', j.error)
+        self.assertEqual((j.step('coop').state, j.step('coop').value), (jobs.SKIPPED, 'Not Made'))
+        self.assertEqual([s.id for s in jobs.RebuildJob(ctx, self.tmp / 'game').steps][-3:],
+                         ['shaders', 'coop', 'scan'])
 
     def test_install_job_with_button_art(self):
         """A version with button art shows the prompts step as a row of its own, after the shaders."""

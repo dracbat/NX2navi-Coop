@@ -37,10 +37,14 @@
 #include "vk_dlssg.h"
 #include "vk_fg.h"
 #include "vk_lowlat.h"
+#include "vk_scenecam.h"   // co-op name tags: the frame's scene camera goes with its present job
 
 #define WEAK __attribute__((weak))
 
-typedef struct { VkImage image; VkFormat format; int w, h, has_crop, crop[4]; uint64_t frame, at, queued, value; } PresentJob;
+typedef struct {
+    VkImage image; VkFormat format; int w, h, has_crop, crop[4]; uint64_t frame, at, queued, value;
+    VkSceneCam cam;   // the camera that drew the frame (vk_scenecam.c), for the overlay on the present thread
+} PresentJob;
 
 static PlatMutex pl = PLAT_MUTEX_INIT;
 static PlatCond pcv = PLAT_COND_INIT;   // job queued, job taken, job submitted
@@ -90,6 +94,7 @@ static void present_main(void *arg) {
         if (flight_on || vk_dump_white) vk_thumbs_frame(j.frame);   // NX2NAVI_DUMP_WHITE reads them too
         vk_dlssg_present_frame(j.frame);
         vk_lowlat_present_frame(j.frame);   // the frame's number for the blit's submit and the present's markers
+        vk_scenecam_presenting(&j.cam);   // the overlay drawn by this blit projects with this frame's camera
         vk_present_blit(j.image, VK_IMAGE_LAYOUT_GENERAL, j.format, j.w, j.h, j.has_crop ? j.crop : NULL);
         uint64_t f = vk_sync_submit(NULL, 0);   // a timeline value after the blit: deferred destruction waits for the blit too
         if (j.value && f != j.value)
@@ -226,6 +231,8 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
     dynres_frame();   // before vk_dlaa_frame reads the DLSS mode it may override
     vk_exec_barrier_log(frame);
     vk_dlaa_frame();
+    VkSceneCam cam;
+    vk_scenecam_frame(&cam, frame);   // this frame's scene camera (resets for the next; a held frame's goes with it)
     vk_sampler_aniso_live();   // NX2NAVI_ANISO changed in the menu: the surface textures' samplers take the new level
     vk_mvsurvey_frame();
     vk_mvprev_frame();
@@ -247,6 +254,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
     }
     PresentJob j = {.image = img->image, .format = img->format, .w = (int)img->width, .h = (int)img->height, .frame = frame,
                     .at = at_ns, .queued = queued, .value = value};
+    j.cam = cam;
     vk_hdr_present_source(img, &j.image, &j.format);   // NX2NAVI_HDR: the float picture the game copied into it, same size
     if (crop) {
         j.has_crop = 1;

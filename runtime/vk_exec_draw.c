@@ -37,6 +37,7 @@
 #include "platform/platform.h"
 #include "stutter_map.h"
 #include "vk_dlaa.h"
+#include "vk_scenecam.h"   // co-op name tags: the scene camera of each frame
 #include "mesh_emu_spirv.h"
 
 #define MAX_BINDINGS 128
@@ -4699,6 +4700,7 @@ static int prepare_draw_ex(VkExec *ex, int prim, int32_t count, int restart, int
     vk_pipeline_line_width(ex->cb, &s, ex->line_width);   // a draw of lines: the game's width; else nothing
     if (!mesh) {
         vk_dlaa_draw(ex);
+        vk_scenecam_draw(ex);   // co-op name tags: one atomic load unless an overlay asked
         vk_mvsurvey_draw(ex);
         vk_mvprev_draw(ex);
     }

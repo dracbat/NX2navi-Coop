@@ -5,10 +5,8 @@
 // way into one, in one. A press that turns co-op on and wants a room at once (Create a room while co-op is off) is
 // kept for a few seconds until the thread has reached Steam.
 //
-// Names over the game: a player's position is projected with the frame's camera as the upscaler's pass knows it
-// (vk_dlaa_fg_camera: position, right, up and forward in the world's metres, the vertical field of view and the
-// aspect). Without a temporal upscaler there is no camera and no names; the player list still says where each is.
-#include <math.h>
+// Over the game this file draws the chat's new lines and an invite; the other players' names above their Links are the
+// name tags' (coop_tags.h, ui/coop_tags_view.cpp), which work with any upscaler or none.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,10 +21,11 @@
 extern "C" {
 #include "cfg.h"
 #include "coop.h"
+#include "coop_colours.h"
+#include "coop_ext_wire.h"
 #include "platform/platform.h"
 #include "ui/menu.h"
 #include "ui_text.h"
-#include "vk_dlaa.h"
 }
 
 enum Page { P_NONE, P_JOIN, P_CHAT, P_INVITE, P_REMOVE, P_LEAVE };
@@ -107,10 +106,31 @@ static void open_window(int page, const char *ret) {
     snprintf(g_return, sizeof g_return, "%s", ret);
 }
 
+// The colours' names (coop_colours.h: green, red, blue, purple).
+static const UiTextId kColourText[COOP_COLOURS] = {UI_MENU_COOP_COLOUR_GREEN, UI_MENU_COOP_COLOUR_RED, UI_MENU_COOP_COLOUR_BLUE,
+                                                   UI_MENU_COOP_COLOUR_PURPLE};
+
+// The colour this player picks (coop_colours.c): Auto, and each colour no other player of the room has now; this
+// player's own colour and the one set stay in the list, so that the row always shows what is set. In a room it stands
+// under the players, whose rows show their colours; out of one, with the settings.
+static void colour_row(void) {
+    static const char *const values[1 + COOP_COLOURS] = {"auto", "green", "red", "blue", "purple"};
+    const char *vals[1 + COOP_COLOURS], *names[1 + COOP_COLOURS];
+    const char *set = cfg_value("NX2NAVI_COOP_COLOUR");
+    const int own = coop_colours_self();
+    int n = 0;
+    vals[n] = values[0], names[n++] = menu_text(UI_MENU_COOP_COLOUR_AUTO);
+    for (int c = 0; c < COOP_COLOURS; c++)
+        if (!coop_colours_held_by_other(c) || c == own || !strcmp(set, values[1 + c]))
+            vals[n] = values[1 + c], names[n++] = menu_text(kColourText[c]);
+    opt_choice_list("NX2NAVI_COOP_COLOUR", UI_MENU_COOP_COLOUR, vals, names, n, UI_MENU_COOP_COLOUR_DESC);
+}
+
 static void settings_rows(void) {
     opt_group(UI_MENU_COOP_SETTINGS);
     opt_toggle("NX2NAVI_COOP_SHARE", UI_MENU_COOP_SHARE, UI_MENU_COOP_SHARE_DESC);
     opt_toggle("NX2NAVI_COOP_NAMES", UI_MENU_COOP_NAMES, UI_MENU_COOP_NAMES_DESC);
+    if (!in_room()) colour_row();
     opt_toggle("NX2NAVI_COOP_CHAT", UI_MENU_COOP_CHAT_SHOW, UI_MENU_COOP_CHAT_SHOW_DESC);
     opt_toggle("NX2NAVI_COOP_STEAM", UI_MENU_COOP_ON, UI_MENU_COOP_ON_DESC);
 }
@@ -177,10 +197,14 @@ static void rows_room(void) {
     opt_group(UI_MENU_COOP_PLAYERS);
     for (int i = 0; i < g_view.n; i++) {
         const CoopPlayer &p = g_view.players[i];
-        char id[40], note[96], where[COOP_SCENE_CAP + 16];
+        char id[40], note[160] = "", where[COOP_SCENE_CAP + 16];
         snprintf(id, sizeof id, "##coop_player%d", i);
-        snprintf(note, sizeof note, "%s%s%s", p.self ? menu_text(UI_MENU_COOP_YOU) : "", p.self && p.host ? ", " : "",
-                 p.host ? menu_text(UI_MENU_COOP_HOST) : "");
+        // the note: their colour in the room (coop_colours.c), you, host
+        const int col = coop_colours_of(p.id);
+        const char *parts[3] = {col >= 0 && col < COOP_COLOURS ? menu_text(kColourText[col]) : nullptr,
+                                p.self ? menu_text(UI_MENU_COOP_YOU) : nullptr, p.host ? menu_text(UI_MENU_COOP_HOST) : nullptr};
+        for (const char *s : parts)
+            if (s) snprintf(note + strlen(note), sizeof note - strlen(note), "%s%s", note[0] ? ", " : "", s);
         const bool here = p.self ? false : p.has_pose && p.pose.scene[0];
         snprintf(where, sizeof where, "%s", p.self ? "" : here ? p.pose.scene : menu_text(UI_MENU_COOP_PLAYER_AWAY));
         const bool removable = g_view.host && !p.self;
@@ -192,6 +216,7 @@ static void rows_room(void) {
             open_window(P_REMOVE, id);
         }
     }
+    colour_row();
     opt_group(UI_MENU_COOP_CHAT);
     for (int i = 0; i < g_view.nchat; i++) {
         char line[COOP_NAME_CAP + COOP_CHAT_CAP + 8];
@@ -444,7 +469,6 @@ bool coop_overlay_tick(void) {
     if (uint32_t s = coop_serial(); s != serial) serial = s, coop_view(&g_over);
     if (g_over.invite_room) return true;
     if (g_over.state != COOP_IN_ROOM) return false;
-    if (g_over.n > 1) return true;
     const uint64_t now = plat_now_ms();
     return g_over.nchat && now - g_over.chat[g_over.nchat - 1].at_ms < CHAT_SHOWN_MS;
 }
@@ -462,51 +486,8 @@ static float label(ImDrawList *dl, float x, float y, const char *text, float sca
 void coop_overlay_draw(float w, float h, float scale, bool menu_open) {
     if (!g_over_on) return;
     const uint64_t now = plat_now_ms();
-    ImDrawList *dl = menu_open ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
-    // the other players' names where their Link stands, in the area this game's Link is in
-    VkDlaaCamera cam;
-    const CoopPlayer *me = nullptr;
-    for (int i = 0; i < g_over.n; i++)
-        if (g_over.players[i].self) me = &g_over.players[i];
-    if (!menu_open && g_over.state == COOP_IN_ROOM && cfg_bool("NX2NAVI_COOP_NAMES") && vk_dlaa_fg_camera(&cam)) {
-        const float ty = tanf(cam.fov_y * 0.5f), tx = ty * cam.aspect;
-        // the game's picture in the frame: centred, with bars above and below or at the sides when its shape differs
-        const float pw = cam.aspect > w / h ? w : h * cam.aspect, ph = cam.aspect > w / h ? w / cam.aspect : h;
-        for (int i = 0; i < g_over.n; i++) {
-            const CoopPlayer &p = g_over.players[i];
-            if (p.self || !p.has_pose || !p.pose.scene[0]) continue;
-            // only a player in the area this game's Link is in
-            if (me && me->has_pose && me->pose.scene[0] && strcmp(me->pose.scene, p.pose.scene)) continue;
-            // a moment ahead along the velocity: the pose is up to a twentieth of a second old
-            float age = (float)p.pose_ms / 1000.0f;
-            if (age > 0.25f) age = 0.25f;
-            float d[3];
-            for (int k = 0; k < 3; k++) d[k] = p.pose.pos[k] + p.pose.vel[k] * age - cam.pos[k];
-            d[1] += 1.9f;   // above the head of an adult Link; a child's name floats a little higher
-            const float z = d[0] * cam.fwd[0] + d[1] * cam.fwd[1] + d[2] * cam.fwd[2];
-            float x = d[0] * cam.right[0] + d[1] * cam.right[1] + d[2] * cam.right[2];
-            float y = d[0] * cam.up[0] + d[1] * cam.up[1] + d[2] * cam.up[2];
-            const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            char text[COOP_NAME_CAP + 24];
-            snprintf(text, sizeof text, "%s  %.0f m", p.name[0] ? p.name : "?", dist);
-            float nx, ny;
-            bool on_screen = z > 0.1f;
-            if (on_screen) {
-                nx = x / (z * tx), ny = y / (z * ty);
-                on_screen = fabsf(nx) < 0.96f && fabsf(ny) < 0.92f;
-            }
-            if (!on_screen) {
-                // beside or behind the picture: at its edge, in the direction to turn to
-                float len = sqrtf(x * x + y * y);
-                if (len < 1e-4f) x = 1, y = 0, len = 1;
-                nx = x / len, ny = y / len;
-                const float m = fabsf(nx) / 0.96f > fabsf(ny) / 0.88f ? fabsf(nx) / 0.96f : fabsf(ny) / 0.88f;
-                nx /= m, ny /= m;
-            }
-            label(dl, w * 0.5f + nx * 0.5f * pw, h * 0.5f - ny * 0.5f * ph, text, scale, on_screen ? 1.0f : 0.75f);
-        }
-    }
     if (menu_open) return;
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
     float y = 12 * scale;
     if (g_over.invite_room) {
         char text[COOP_NAME_CAP + 160];

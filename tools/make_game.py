@@ -23,13 +23,21 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
               GPU driver build done once into the driver's own cache, so play stops for them far less often
               (`ocarina.exe --prepare-shaders`); variants met in play with another bind state are still translated
               then, and the driver cache is per executable and is lost when the driver clears it
-  7. prompts  only with button art in the kit (<kit>/prompt-art, tools/make_launcher.py and make_kit.py
+  7. coop     tools/make_puppet_mod.py makes the actor co-op shows the other players as (runtime/coop_puppet.c) from
+              the RomFS image into the mod folder <out>/mods/Co-op puppets. The game loads that mod only when it
+              starts with co-op on (runtime/mods.h MODS_COOP_PUPPETS), so a game that does not play co-op loads none
+              of it; it is made at every build all the same, so that a player who turns co-op on has it at the next
+              start. Its key names the game files, the tool's version (COOP_TOOL, changed by hand) and whether its
+              files are all there, and running it makes no other step run again. A failure is not recorded and does
+              not stop the build: the game runs without the other players' Links, and the next build tries again.
+              NX2NAVI_COOP_PUPPET_MOD=0 skips it; a kit without the tool skips it too
+  8. prompts  only with button art in the kit (<kit>/prompt-art, tools/make_launcher.py and make_kit.py
               --prompt-art): tools/pad_prompts.py draws the Xbox, PlayStation, Steam Deck and keyboard and mouse button prompts
               from it into <out>/romfs-patches-* (the Controls menu's Button prompts loads them), the keys as the
               bind_ lines of <out>/nx2navi.ini give them. Its key names everything it reads (the RomFS, the art, the
               tools, those lines), so it runs again only when one of them changed or a folder is gone, and running
               it makes no other step run again. A failure here leaves the game and its shaders complete.
-  8. scan     tools/romfs_check.py decompresses every file of the game data once, writes <out>/romfs-check.json and
+  9. scan     tools/romfs_check.py decompresses every file of the game data once, writes <out>/romfs-check.json and
               makes stand-ins for damaged textures in <out>/mods. Its key names the game files and the check's
               version (SCAN_TOOL, changed by hand: an edit of the tool alone does not run it again), and it
               is last: nothing of it runs while the game does.
@@ -105,10 +113,10 @@ EXEFS_FILES = ('main', 'main.npdm', 'sdk', 'subsdk0', 'rtld')
 MODULES = ('main', 'sdk', 'subsdk0', 'rtld')
 ALIGN = 16
 STATE_VERSION = 2
-STEPS = ('exefs', 'romfs', 'lift', 'compile', 'shaders', 'prompts', 'scan')
+STEPS = ('exefs', 'romfs', 'lift', 'compile', 'shaders', 'coop', 'prompts', 'scan')
 # Steps whose key names every input they read rather than the step before them: a step before them that runs does
 # not make them run again, and they make no step after them run again.
-OWN_KEY_STEPS = ('prompts', 'scan')
+OWN_KEY_STEPS = ('coop', 'prompts', 'scan')
 # (a step that runs, a later step that reads nothing it writes): the later step is not made to run again. The lift
 # reads only the unpacked ExeFS (step_key), so the RomFS step leaves it alone: an install that was cut short while the
 # image was still being packed, the lift beside it already done, packs the image again but does not lift again.
@@ -134,6 +142,13 @@ SCAN_TOOL = '55ea0c150aaf9dac93a2e6fd3b4ca11e1c572b5eee8b6bd74960535964384634'
 # what they write. Its value is their digest in 0.7.0 and 0.7.1, so the key of an install made by those stays what it
 # is. tests/launcher_test.py test_the_prompt_tools_logic_is_the_recorded_one asks the question when the logic changes.
 PROMPT_TOOLS = 'ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249'
+# The coop step (step_coop): the mod folder tools/make_puppet_mod.py writes (its MOD_NAME), the files it holds, and
+# what stands for the tool in the step's key, changed by hand when a change to the tool can change what it writes.
+COOP_MOD = 'Co-op puppets'
+COOP_FILES = ('Pack/Actor/CoopPuppet_Child.pack.zs', 'Pack/Actor/CoopPuppet_Adult.pack.zs',
+              'RSDB/ActorInfo.Product.111.rstbl.byml.zs', 'RSDB/GameActorInfo.Product.111.rstbl.byml.zs',
+              'System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs')
+COOP_TOOL = '1'
 
 # Bring-up fixes in the lifted SDK, each anchored on exact generated text that must occur once.
 LIFT_FIXES = [
@@ -2568,17 +2583,45 @@ def step_scan(out):
              'retry this step')
 
 
+def coop_skip():
+    """Why the coop step makes nothing this time, or '': NX2NAVI_COOP_PUPPET_MOD=0 in the build's environment, or a
+    kit without tools/make_puppet_mod.py."""
+    if os.environ.get('NX2NAVI_COOP_PUPPET_MOD', '').strip() == '0':
+        return 'coop: the co-op puppets are not made (NX2NAVI_COOP_PUPPET_MOD=0)'
+    if not (KIT / 'tools' / 'make_puppet_mod.py').is_file():
+        return 'coop: none to make, the kit has no puppet tool'
+    return ''
+
+
+def step_coop(out):
+    """The actor co-op shows the other players as, made from this PC's own RomFS image into the mod folder
+    <out>/mods/Co-op puppets (tools/make_puppet_mod.py). False when that fails: the game runs without the other
+    players' Links, the step is not recorded and the next build tries again."""
+    proc = subprocess.run(py_cmd(KIT / 'tools' / 'make_puppet_mod.py', '--game', out), stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+    for line in proc.stdout.splitlines():
+        say(f'  {line}')
+    if proc.returncode:
+        say("coop: the co-op puppets could not be made (the lines above say why): the game runs without the other "
+            "players' Links, and the next build tries again")
+        return False
+    return True
+
+
 def step_key(step, identity, out=None):
     """What a step's output depends on. exefs and romfs: the game files only; lift: the unpacked ExeFS, the lifter and
     the mods' code cheats and ExeFS patches (mod_digest); compile: the lift, the runtime sources, this script and the
     processor (cpu_tag); shaders: the compile without the mods' code, the preparing script and the translator;
     prompts: the game files, the kit's button art, the version of the tools that draw it (PROMPT_TOOLS), the bind_
     lines of nx2navi.ini, and whether every folder it writes is still there; scan: the game files, the check's version
-    (SCAN_TOOL) and whether its report is still there. The compile's key also names the kit's execution profile or
-    an instrumented build (pgo_tag); the shaders' key does not, as neither changes what the shaders are prepared
-    from."""
+    (SCAN_TOOL) and whether its report is still there; coop: the game files, the puppet tool's version (COOP_TOOL) and
+    whether every file it writes is still there. The compile's key also names the kit's execution profile or an
+    instrumented build (pgo_tag); the shaders' key does not, as neither changes what the shaders are prepared from."""
     if step in ('exefs', 'romfs'):
         return f'{step}-1|{identity}'
+    if step == 'coop':
+        written = all((out / 'mods' / COOP_MOD / 'romfs' / f).is_file() for f in COOP_FILES)
+        return f'coop-1|{identity}|{COOP_TOOL}|{"written" if written else "missing"}'
     if step == 'scan':
         written = 'written' if (out / 'romfs-check.json').is_file() else 'missing'
         tool = KIT / 'tools' / 'romfs_check.py'
@@ -2728,8 +2771,8 @@ def build_main():
     runs = {'exefs': lambda: step_exefs(src, out), 'romfs': lambda: step_romfs(src, out, min(a.jobs, 8)),
             'lift': lambda: step_lift(out, cache),
             'compile': lambda: step_compile(out, cache, msys, a.jobs, romfs_job, a.rebuild and not a.retune),
-            'shaders': lambda: step_shaders(out, a.rebuild), 'prompts': lambda: step_prompts(out),
-            'scan': lambda: step_scan(out)}
+            'shaders': lambda: step_shaders(out, a.rebuild), 'coop': lambda: step_coop(out),
+            'prompts': lambda: step_prompts(out), 'scan': lambda: step_scan(out)}
     state_lock = threading.Lock()   # the RomFS step records itself from its own thread
 
     def save():
@@ -2747,7 +2790,10 @@ def build_main():
 
     def run(name):
         t = time.time()
-        runs[name]()
+        if runs[name]() is False:   # a step whose failure does not stop the build (coop): not recorded, tried again
+            say(f'{name}: not made, {time.time() - t:.0f} s')
+            emit('step', step=name, state='skip', value='Not Made')
+            return
         with state_lock:
             state['steps'][name] = step_key(name, src.identity, out)
         save()
@@ -2765,6 +2811,9 @@ def build_main():
             if name == 'prompts' and not prompt_art_dir():
                 say('prompts: none to draw, the kit has no button art')
                 emit('step', step=name, state='skip')
+            elif name == 'coop' and coop_skip():
+                say(coop_skip())
+                emit('step', step=name, state='skip')
             elif state['steps'].get(name) == step_key(name, src.identity, out) and not lift_gone(name):
                 say(f'{name}: done before')
                 emit('step', step=name, state='skip')
@@ -2781,7 +2830,7 @@ def build_main():
                     save()
                 say(f'{name}:')
                 emit('step', step=name, state='start')
-                if name in ('shaders', 'prompts', 'scan') and romfs_job:   # they read the RomFS image
+                if name in ('shaders', 'coop', 'prompts', 'scan') and romfs_job:   # they read the RomFS image
                     romfs_job.join()
                 if name == 'romfs' and a.until != 'romfs':
                     # The RomFS image is mostly disk work, the lift and the compile are processor work: they run side

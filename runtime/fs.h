@@ -33,6 +33,7 @@ uint32_t romfs_read(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uin
 uint32_t romfs_size(int64_t *out, uint64_t h);
 void romfs_close(uint64_t h);
 uint8_t *romfs_load(const char *rel, uint64_t *size_out);   // whole file by RomFS-relative path, malloc'd (or NULL)
+int romfs_has(const char *rel);                            // 1: the game is served that file (the image's or a mod's)
 uint32_t romfs_entry_type(int *out, const char *path);
 // The children of RomFS directory path: fn(name, is_dir, size, ctx) once per file and once per subdirectory, in
 // index order; fn returns 0 to stop. FS_R_PATH_NOT_FOUND when path is not a directory.
