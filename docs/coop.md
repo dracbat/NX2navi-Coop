@@ -27,7 +27,11 @@ NPCs are each game's, and each player keeps their own rupees, ammunition, hearts
   not get into the room.
 - **The Co-op puppets mod**, which the launcher makes from your own game when it builds it (*Make the Co-op Players*):
   the other players' Links are made from it. Without it, or with it switched off in the launcher's Mods screen, you
-  play together as well but see neither the other players' Links nor their names; they still see yours.
+  play together as well but see neither the other players' Links nor their names; they still see yours. The game
+  loads it only when it starts with co-op on, so a game that does not play co-op loads none of it: after turning
+  co-op on during play, start the game again to see the other players' Links. It replaces two of the game's actor
+  tables, `RSDB/ActorInfo` and `RSDB/GameActorInfo`, with copies that list the Link it adds: in a game with co-op on,
+  of this mod and another that changes those tables, only the one higher in the load order has its tables used.
 
 ## Rooms
 
@@ -191,7 +195,7 @@ teleports them then.
 
 | Key | Default | |
 |---|---|---|
-| `coop_steam` | `0` | on or off, at once. On: the game signs in to Steam; off: no network. (`coop`, the switch of the co-op of versions up to 0.9.2, does nothing: a line of it left in a file turns nothing on) |
+| `coop_steam` | `0` | on or off, at once. On: the game signs in to Steam; off: no network. The other players' Links need a game started with it on (the Co-op puppets mod, above). (`coop`, the switch of the co-op of versions up to 0.9.2, does nothing: a line of it left in a file turns nothing on) |
 | `coop_share` | `1` | in a room, share progress, items and songs (above) |
 | `coop_keys` | `pool` | in a room with `coop_share` on, one count of small keys per dungeon for the whole room, kept by the room's host (above); `own`: each player's keys are their own |
 | `coop_names` | `1` | show each other player's name above their Link, in their colour |

@@ -24,11 +24,13 @@ Steps, each skipped when a run before finished it for the same inputs (state in 
               (`ocarina.exe --prepare-shaders`); variants met in play with another bind state are still translated
               then, and the driver cache is per executable and is lost when the driver clears it
   7. coop     tools/make_puppet_mod.py makes the actor co-op shows the other players as (runtime/coop_puppet.c) from
-              the RomFS image into the mod folder <out>/mods/Co-op puppets. Its key names the game files, the tool's
-              version (COOP_TOOL, changed by hand) and whether its files are all there, and running it makes no other
-              step run again. A failure is not recorded and does not stop the build: the game runs without the
-              other players' Links, and the next build tries again. NX2NAVI_COOP_PUPPET_MOD=0 skips it; a kit
-              without the tool skips it too
+              the RomFS image into the mod folder <out>/mods/Co-op puppets. The game loads that mod only when it
+              starts with co-op on (runtime/mods.h MODS_COOP_PUPPETS), so a game that does not play co-op loads none
+              of it; it is made at every build all the same, so that a player who turns co-op on has it at the next
+              start. Its key names the game files, the tool's version (COOP_TOOL, changed by hand) and whether its
+              files are all there, and running it makes no other step run again. A failure is not recorded and does
+              not stop the build: the game runs without the other players' Links, and the next build tries again.
+              NX2NAVI_COOP_PUPPET_MOD=0 skips it; a kit without the tool skips it too
   8. prompts  only with button art in the kit (<kit>/prompt-art, tools/make_launcher.py and make_kit.py
               --prompt-art): tools/pad_prompts.py draws the Xbox, PlayStation, Steam Deck and keyboard and mouse button prompts
               from it into <out>/romfs-patches-* (the Controls menu's Button prompts loads them), the keys as the

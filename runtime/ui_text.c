@@ -685,8 +685,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_ON] = "Co-op (experimental)",
     [UI_MENU_COOP_ON_DESC] = "Play with friends over Steam, each in their own game and save. Nobody sets up a router: rooms "
                              "and invites go through Steam, which shows you as playing Spacewar, its test app. Needs Steam "
-                             "running; the launcher takes Steam's library file from a Steam game you have installed. Off: the "
-                             "game uses no network.",
+                             "running; the launcher takes Steam's library file from a Steam game you have installed. Switched "
+                             "on during play, it shows the other players as Links from the game's next start. Off: the game "
+                             "uses no network.",
     [UI_MENU_COOP_NO_LIBRARY] = "Steam's library file, steam_api64.dll, is not beside the game. The launcher puts it there when "
                                 "it starts the game, from a Steam game you have installed: start the game from the launcher, with "
                                 "Steam and at least one game from 2021 or later installed. You can also copy the file yourself "
@@ -1394,7 +1395,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_ON_DESC] = "Играйте с друзьями через Steam, каждый в своей игре и со своим сохранением. Настраивать роутер "
                              "не нужно: комнаты и приглашения идут через Steam, который показывает, что вы играете в Spacewar, "
                              "его тестовое приложение. Нужен запущенный Steam; файл его библиотеки лаунчер берёт из "
-                             "установленной у вас игры Steam. Выкл.: игра не использует сеть.",
+                             "установленной у вас игры Steam. Если включить во время игры, другие игроки появятся в виде "
+                             "Линков после следующего запуска игры. Выкл.: игра не использует сеть.",
     [UI_MENU_COOP_NO_LIBRARY] = "Файла библиотеки Steam, steam_api64.dll, нет рядом с игрой. Лаунчер кладёт его туда при запуске "
                                 "игры, из установленной у вас игры Steam: запустите игру из лаунчера при установленном Steam и "
                                 "хотя бы одной игре 2021 года или новее. Можно и самому скопировать файл из папки любой игры "
@@ -2077,7 +2079,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_COOP_ON_DESC] = "Jogue com amigos pela Steam, cada um no seu jogo e no seu save. Ninguém configura roteador: "
                              "salas e convites passam pela Steam, que mostra você jogando Spacewar, o app de teste dela. "
                              "Precisa da Steam aberta; o launcher pega o arquivo da biblioteca da Steam de um jogo da Steam "
-                             "que você tem instalado. Desligado: o jogo não usa a rede.",
+                             "que você tem instalado. Ligado durante o jogo, os outros jogadores aparecem como Links a partir "
+                             "do próximo início do jogo. Desligado: o jogo não usa a rede.",
     [UI_MENU_COOP_NO_LIBRARY] = "O arquivo da biblioteca da Steam, steam_api64.dll, não está ao lado do jogo. O launcher o coloca "
                                 "lá ao iniciar o jogo, a partir de um jogo da Steam que você tem instalado: inicie o jogo pelo "
                                 "launcher, com a Steam e pelo menos um jogo de 2021 ou mais novo instalados. Você também pode "
@@ -2842,7 +2845,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_TAB_COOP] = "合作",
     [UI_MENU_COOP_ON] = "合作（实验性）",
     [UI_MENU_COOP_ON_DESC] = "通过 Steam 与朋友一起玩，各自运行自己的游戏和存档。无需设置路由器：房间和邀请都经由 Steam，Steam 会显示你正在玩它的测试应用 Spacewar。需要 Steam "
-                             "正在运行；启动器会从你已安装的 Steam 游戏里取得 Steam 的库文件。关闭：游戏不使用网络。",
+                             "正在运行；启动器会从你已安装的 Steam 游戏里取得 Steam 的库文件。若在游戏中途开启，其他玩家要到下次启动游戏后才会以林克的样子出现。"
+                             "关闭：游戏不使用网络。",
     [UI_MENU_COOP_NO_LIBRARY] = "游戏旁边没有 Steam 的库文件 steam_api64.dll。启动器在启动游戏时会从你已安装的 Steam 游戏里把它放到那里：请在安装了 Steam 和至少一款 2021 "
                                 "年或更新的游戏的情况下，从启动器启动游戏。你也可以自己从某个 Steam 游戏的文件夹里把这个文件复制到 ocarina.exe 所在的文件夹。",
     [UI_MENU_COOP_OLD_LIBRARY] = "游戏旁边的 steam_api64.dll 对合作模式来说太旧。请换成较新的 Steam 游戏里的那个文件。",

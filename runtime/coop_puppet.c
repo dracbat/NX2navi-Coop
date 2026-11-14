@@ -150,6 +150,7 @@ typedef struct {
 static struct {
     int test;               // NX2NAVI_COOP_PUPPET_TEST: 1 spike, 2 shadow
     int remote;             // NX2NAVI_COOP_PUPPETS: the other players' puppets
+    int coop;               // NX2NAVI_COOP_STEAM: co-op is on
     unsigned cfg_seen;
     int set;                // the patch set's index
     int want;               // the present thread's verdict: the hook has work
@@ -1364,8 +1365,10 @@ static void shadow(Cpu *c, uint64_t player) {
 // from a player not yet listed is not delivered there). A PUPPET carries the signature of the last GEAR sent.
 //
 // NX2NAVI_COOP_PUPPETS=0 shows no puppets in this game; it still sends its own, so that the others see this player.
-// The puppets' actors come from the Co-op puppets mod (tools/make_puppet_mod.py): when the game's files lack their
-// packs (the mod missing or switched off), no puppet is asked for, and the log says so once.
+// The puppets' actors come from the Co-op puppets mod (tools/make_puppet_mod.py), which the game loads only when it
+// starts with co-op on or with a puppet test (mods.h MODS_COOP_PUPPETS): when the game's files lack their packs (the
+// mod missing, switched off, or left out at a start with co-op off), no puppet is asked for, and once co-op is on the
+// log says so once.
 
 #define HIST 8
 #define SILENT_MS 3000
@@ -2407,6 +2410,7 @@ void coop_puppet_present(void) {
         P.test = !t ? 0 : !strncmp(t, "spike", 5) ? 1 : !strncmp(t, "shadow", 6) ? 2 : 0;
         const char *r = cfg_get("NX2NAVI_COOP_PUPPETS");   // no row in the settings table: on unless "0"
         P.remote = !(r && !strcmp(r, "0"));
+        P.coop = cfg_bool("NX2NAVI_COOP_STEAM");
         const char *bv = cfg_get("NX2NAVI_COOP_PUPPET_BB");   // test: off unless set (and not "0")
         P.bb_copy = bv && *bv && strcmp(bv, "0") != 0;
         const char *am = cfg_get("NX2NAVI_COOP_PUPPET_ARMS");   // test: upper (default), upper3, all, follow, 0
@@ -2439,13 +2443,14 @@ void coop_puppet_present(void) {
             P.side = side;
         }
     }
-    if (N.files < 0) {   // once: the puppets' actor packs, which the Co-op puppets mod adds
+    if (N.files < 0 && (P.coop || P.test)) {   // once co-op is on: the puppets' actor packs, which the Co-op puppets mod adds
         int ok = 1;
         for (int i = 0; i < 2; i++)
             if (!romfs_has(puppet_packs[i])) {
                 ok = 0;
-                rt_log("coop: puppet: the game's files have no %s (the Co-op puppets mod is missing or switched off): "
-                       "no other player's Link is shown, nor their name above it", puppet_packs[i]);
+                rt_log("coop: puppet: the game's files have no %s (the Co-op puppets mod is missing or switched off, or "
+                       "the game started with co-op off): no other player's Link is shown, nor their name above it",
+                       puppet_packs[i]);
             }
         N.files = ok;
     }

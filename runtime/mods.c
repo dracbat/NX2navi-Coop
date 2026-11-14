@@ -133,6 +133,7 @@ static const char *problem_name(ModProblem p) {
     case MOD_EXEFS_UNSUPPORTED: return "an ExeFS patch file cannot be applied; the whole mod stays off";
     case MOD_EXEFS_OTHER: return "its ExeFS patches are for another game version";
     case MOD_BAD_NAME: return "its folder name holds '|', which the order list uses; rename the folder";
+    case MOD_COOP_OFF: return "for co-op, which is off at this start (coop_steam): left out until a start with it on";
     default: return "ok";
     }
 }
@@ -360,6 +361,11 @@ static int scan_cb(const char *name, int kind, uint64_t size, void *ctx) {
                : m->nsets || m->kind & (MOD_ROMFS | MOD_CHEATS)     ? MOD_OK
                : m->kind & MOD_EXEFS                                 ? MOD_EXEFS_OTHER
                                                                      : MOD_EMPTY;
+    // the setup's co-op mod only in a game that starts with co-op on, or with the puppets' test (mods.h)
+    const char *puppet_test = cfg_get("NX2NAVI_COOP_PUPPET_TEST");
+    if (m->problem == MOD_OK && !strcmp(m->name, MODS_COOP_PUPPETS) && !cfg_bool("NX2NAVI_COOP_STEAM") &&
+        !(puppet_test && *puppet_test))
+        m->problem = MOD_COOP_OFF;
     m->enabled = m->start_enabled = !listed(disabled, m->name);
     nmods++;
     return 1;

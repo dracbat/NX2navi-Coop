@@ -846,7 +846,8 @@
 # The rest of the co-op settings have no menu rows (docs/coop.md, "Playing together"). Everyone in a room should
 # use the same, and coop_dialog and coop_era = shared must match: games that differ in them share no progress.
 # The other players as Links of their own, in their gear (coop_puppet_gear = 0: without it), made from the Co-op
-# puppets mod the launcher makes. 0 = not shown in your game; yours is still shown in theirs.
+# puppets mod the launcher makes, which the game loads only when it starts with coop_steam = 1. 0 = not shown in your
+# game; yours is still shown in theirs.
 # coop_puppets = 1
 # coop_puppet_gear = 1
 # A placed enemy one player kills dies in every world of that area (coop_kills), and each player's hits on it count in
