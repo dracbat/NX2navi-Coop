@@ -8,9 +8,10 @@
 // handler call nor a log line per message. coop_ext_log gives the modules the same for their own lines about what a
 // player sent.
 //
-// NX2NAVI_COOP_EXT_TEST=echo (tests, environment only): every kind of coop_ext_wire.h that no module handles here is
-// parsed, packed again and sent back to its sender, so that a test peer (tests/coop_ext_peer.py --echo) checks its
-// codec against this one over the room, and the rates with a flood.
+// NX2NAVI_COOP_EXT_TEST=echo (tests, environment only): every kind of coop_ext_wire.h is parsed, packed again and sent
+// back to its sender, so that a test peer (tests/coop_ext_peer.py --echo) checks its codec against this one over the
+// room, and the rates with a flood. The modules then get none of the room's messages: coop_ext_on_message refuses
+// their handlers, so that the echo has every kind whichever modules the build holds. They still send their own.
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -177,7 +178,7 @@ void coop_ext_init(void) {
 }
 
 int coop_ext_on_message(uint8_t kind, CoopExtMsgFn fn, void *user) {
-    if (kind < COOP_EXT_KIND || !fn || E.handler[kind - COOP_EXT_KIND].fn || E.started) return 0;
+    if (kind < COOP_EXT_KIND || !fn || E.handler[kind - COOP_EXT_KIND].fn || E.started || E.echo) return 0;
     E.handler[kind - COOP_EXT_KIND].fn = fn, E.handler[kind - COOP_EXT_KIND].user = user;
     return 1;
 }
@@ -221,10 +222,10 @@ void coop_ext_message(uint64_t from, uint8_t kind, const uint8_t *d, size_t n) {
 
 void coop_ext_step(uint64_t now) {
     if (!E.started) {
-        E.started = 1;   // the modules registered before coop_init: the test's echo takes the kinds left over
+        E.started = 1;   // the modules registered before coop_init; with the test's echo on, none of them got a kind
         for (uint8_t k = COOP_K_KILL; E.echo && k < COOP_K_EXT_END; k++)
             if (!E.handler[k - COOP_EXT_KIND].fn) E.handler[k - COOP_EXT_KIND].fn = echo, E.handler[k - COOP_EXT_KIND].user = (void *)(uintptr_t)k;
-        if (E.echo) rt_log("coop: ext: test: the kinds no module handles are parsed and sent back (NX2NAVI_COOP_EXT_TEST=echo)");
+        if (E.echo) rt_log("coop: ext: test: every kind is parsed and sent back, and no module gets one (NX2NAVI_COOP_EXT_TEST=echo)");
     }
     CoopView *cv = &E.last;
     coop_view(cv);

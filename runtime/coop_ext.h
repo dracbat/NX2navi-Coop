@@ -44,7 +44,8 @@ void coop_ext_init(void);
 typedef void (*CoopExtMsgFn)(int seat, const uint8_t *b, size_t n, void *user);   // a message of the module's kind
 typedef void (*CoopExtViewFn)(const CoopExtView *v, void *user);                  // after any change of the view
 typedef void (*CoopExtTickFn)(uint64_t now_ms, void *user);                       // every step while co-op is on
-// One handler per kind (from COOP_EXT_KIND on); up to 8 view hooks and 8 tick hooks. 0 when taken or full.
+// One handler per kind (from COOP_EXT_KIND on); up to 8 view hooks and 8 tick hooks. 0 when taken or full, and for
+// every handler while the test's echo is on (coop_ext.c, NX2NAVI_COOP_EXT_TEST).
 int coop_ext_on_message(uint8_t kind, CoopExtMsgFn fn, void *user);
 int coop_ext_on_view(CoopExtViewFn fn, void *user);
 int coop_ext_on_tick(CoopExtTickFn fn, void *user);
