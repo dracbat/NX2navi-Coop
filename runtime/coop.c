@@ -631,6 +631,10 @@ static void coop_main(void *arg) {
             continue;
         }
         G.net->pump(on_event, NULL);
+        // read again after the commands and the events: the times they stored (a room entered, a player's pose, a
+        // ROSTER) are then never later than now, whose differences below would else wrap round (a room entered a
+        // millisecond after the step began ended at once as a host who did not answer)
+        now = plat_now_ms();
         tick(now);
         drain_outbox();
         publish(now);
