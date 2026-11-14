@@ -1677,7 +1677,8 @@ class App:
                          'can load what needs them.')
         if m.name == mods.COOP_PUPPETS:
             lines.append('The launcher made it from your own game files: the Link the other players of a co-op room '
-                         'are shown as. Off: you do not see them.')
+                         'are shown as. The game loads it only when it starts with co-op on, so a game that does not '
+                         'play co-op loads none of it. Off: you do not see the other players.')
         if m.other_version:
             lines.append(f'{m.other_version} of its code patch files are for another version of the game and are '
                          'left out.')
@@ -1687,7 +1688,7 @@ class App:
         if m.waiting and m.enabled:
             lines.append('Its code is not in the game yet: Play first builds the game again with it, which takes a '
                          'few minutes.')
-        if m.usable:
+        if m.usable and m.name != mods.COOP_PUPPETS:   # that one says when the game loads it
             lines.append('On: the game loads it at its next start. Off: it stays in the mods folder, unused.')
         return {'title': m.name, 'text': lines}
 

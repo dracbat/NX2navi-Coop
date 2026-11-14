@@ -19,7 +19,14 @@ typedef enum {
     MOD_EXEFS_UNSUPPORTED,   // an ExeFS patch file the port cannot apply (note says why): the whole mod stays off
     MOD_EXEFS_OTHER,    // only ExeFS patches, all for another game version
     MOD_BAD_NAME,       // its folder name holds '|', the separator of the order keys
+    MOD_COOP_OFF,       // the Co-op puppets mod (MODS_COOP_PUPPETS) in a game that started with co-op off: left out
 } ModProblem;
+
+// The folder of the mod the setup makes for co-op (tools/make_puppet_mod.py MOD_NAME, tools/make_game.py's coop step):
+// the actor the other players of a room are shown as (coop_puppet.c). It replaces two of the game's actor tables with
+// copies that list that actor, so a game loads it only when it starts with co-op on (coop_steam) or with the puppets'
+// one-game test (NX2NAVI_COOP_PUPPET_TEST); a game that does not play co-op loads none of its files.
+#define MODS_COOP_PUPPETS "Co-op puppets"
 
 typedef struct {
     char name[256];        // folder name, UTF-8
