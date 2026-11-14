@@ -35,8 +35,9 @@
 // Remote players: each game sends its Link's pose and what he wears and holds to the room (PUPPET and GEAR,
 // coop_ext_wire.h), so that the other players' puppets get gear and arms as the shadow test's does (section "the
 // other players"). NX2NAVI_COOP_PUPPET_TEST=spike|shadow are the one-game tests.
-// Kills, shared damage and difficulty live in coop_kill.c: this file's frame hook hands it the area and Link
-// (coop_kill_frame), and its present switch runs it (coop_kill_present) and keeps the hook on while it needs it.
+// Kills, shared damage and difficulty live in coop_kill.c, cutscenes, the time of day and the era in coop_cutscene.c:
+// this file's frame hook hands them the area and Link (coop_kill_frame, coop_cutscene_frame), and its present switch
+// runs them (coop_kill_present, coop_cutscene_present) and keeps the hook on while they need it.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@
 #include "cfg.h"
 #include "coop.h"
 #include "coop_colours.h"
+#include "coop_cutscene.h"
 #include "coop_ext.h"
 #include "coop_ext_wire.h"
 #include "coop_game.h"
@@ -1676,7 +1678,8 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
         int heard = others && s != self && gen[s] && r[s].n && now - r[s].recv_ms[r[s].head] < SILENT_MS;
         if (heard) remote_pose(&r[s], (uint32_t)now, &pose);
         int here = heard && in_world && (pose.flags & COOP_PUPPET_IN_WORLD) && !strcmp(pose.area, area);
-        int want = here && P.remote && files > 0;
+        int scene = here && coop_cutscene_hides_puppets();   // no puppet stands in a story cutscene here
+        int want = here && !scene && P.remote && files > 0;
         char name[64] = "";
         if (want) puppet_name(name, sizeof name, pose.flags & COOP_PUPPET_ADULT);
         int held = p->state == SP_ASKED || p->state == SP_FOLLOW, other = held && N.puppet_gen[s] != gen[s];
@@ -1684,7 +1687,7 @@ static void remotes(Cpu *c, uint64_t player, const char *area) {
             rt_log("coop: puppet: seat %d's puppet goes (%s)", s,
                    other ? "another player is in the seat" : !heard ? "not heard"
                    : !in_world ? "this game is not in the world" : !here ? "not in this area"
-                   : !P.remote ? "the puppets are off (NX2NAVI_COOP_PUPPETS=0)"
+                   : scene ? "a cutscene plays here" : !P.remote ? "the puppets are off (NX2NAVI_COOP_PUPPETS=0)"
                    : files <= 0 ? "the puppets' files are missing" : "other age");
             puppet_release(c, p);
         }
@@ -2393,6 +2396,7 @@ static void puppet_frame(Cpu *c) {
         if (P.test == 2) shadow(c, player);
     }
     coop_kill_frame(c, player, area);   // kills, shared damage, difficulty (coop_kill.c): the area and Link's life component
+    coop_cutscene_frame(c, player, area);   // cutscenes together (coop_cutscene.c): the event manager, leader and follower
     // the other players: their puppets, and this Link's PUPPET and GEAR while others are in the room
     if (N.others || N.alive) remotes(c, player, area);
     colour_frame(c, player);
@@ -2454,7 +2458,8 @@ void coop_puppet_present(void) {
     // local Link has a colour (or still carries one); off (the original call) otherwise
     // ... and while kills, shared damage or difficulty need the area and Link from it (coop_kill.c)
     int kills = coop_kill_present();
-    int want = P.test != 0 || N.others || N.alive || colour_own() != COL_NONE || CL.dirty || kills;
+    int cuts = coop_cutscene_present();   // ... and while cutscenes together have a room with others (or a test)
+    int want = P.test != 0 || N.others || N.alive || colour_own() != COL_NONE || CL.dirty || kills || cuts;
     if (want != P.want) {
         P.want = want;
         rt_patch_switch(P.set, want);
@@ -2469,6 +2474,7 @@ void coop_puppet_init(void) {
     coop_ext_on_message(COOP_K_GEAR, on_gear, NULL);
     coop_ext_on_view(on_view, NULL);
     coop_kill_init();   // kills, shared damage, difficulty (coop_kill.c): its messages and hooks on the co-op thread
+    coop_cutscene_init();   // cutscenes together (coop_cutscene.c): its message and hooks on the co-op thread
 }
 
 __attribute__((constructor)) static void puppet_register(void) {

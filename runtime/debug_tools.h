@@ -48,6 +48,19 @@ const char *dbg_event_name(int i);
 void dbg_event_start(const char *name);
 int dbg_busy(void);
 void dbg_status(char out[160]);
+// Co-op's gate (coop_game.c gate), any thread: 1 from the moment a teleport is asked for until a few seconds after it
+// arrived, was refused or was given up. The game's play clock jumps when an area is changed this way, and that jump is
+// no other save being loaded.
+int dbg_teleport_recent(void);
+// Co-op cutscenes (coop_cutscene.c): a teleport to the start position of area nearest to near (metres;
+// NULL: the area's first), with boot ("" none) reserved as the event the game plays when Link arrives (the game data
+// text Sequence_ReservedBootEventName, which the plain teleport leaves empty). While an event plays after the arrival,
+// the teleport's watch for a fall stands aside (a scene may move Link anywhere). The game refuses a teleport while a menu
+// is open or Link is in the air or swimming: this one is asked again for a while (1200 pad reads, 20 s at 60 a second).
+void dbg_warp_near(const char *area, const float near[3], const char *boot);
+// Co-op cutscenes, any thread: the teleports that arrived so far (one more at each arrival), so that a caller tells a
+// teleport that arrived from one the game refused.
+unsigned dbg_arrivals(void);
 
 // The free camera: the game draws from a camera of the menu's instead of its own. With sticks on, the pad flies it and
 // Link stands; with sticks off it stays where it is and the pad plays the game. speed in metres a second.
