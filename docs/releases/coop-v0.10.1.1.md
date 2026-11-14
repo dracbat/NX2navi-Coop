@@ -28,7 +28,8 @@ Nothing of the game is included: everything is built on your PC from your own du
 
 - **The other players as Links of their own** in your world, on by default (`coop_puppets = 0` under `[coop]` in
   `nx2navi.ini` turns them off), moving as theirs do, in their gear, with their names above them. The launcher makes
-  the files for them from your own game when it builds it (*Make the Co-op Players*).
+  the files for them from your own game when it builds it (*Make the Co-op Players*), and the game loads them when it
+  starts with co-op on: after turning co-op on in the menu, start the game again.
 - **Colours:** every player of a room has a colour of their own, green, red, blue or purple, on their Link and their
   name, the same in every game. The Co-op tab's *Your colour* picks one; the room's host makes sure no two players
   share one.

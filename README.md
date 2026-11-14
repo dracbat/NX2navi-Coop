@@ -36,7 +36,8 @@ The requirements are NX2navi's ([Installing](#installing) below). Where the rest
 ### Playing together
 
 1. Start the game and open the menu (F1, or Minus and Plus together on a gamepad): the **Co-op** tab. Turn *Co-op
-   (experimental)* on.
+   (experimental)* on, then quit and start the game again from the launcher: a game that starts with co-op on gets
+   Steam's library file from the launcher and shows the other players as Links.
 2. One player chooses *Create a room* and passes the room ID (`XXXX-XXXX`; a press on it copies it) to the others in
    a private message, or sends Steam friends an invite with *Invite a friend*. The others choose *Join a room* and type
    the ID, or accept the invite on their Co-op tab (*Join their room*). Anyone who has the room ID can join while the
