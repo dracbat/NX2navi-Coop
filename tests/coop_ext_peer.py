@@ -14,9 +14,10 @@ Modes (any together):
                              again for other times)
     --expect-refused         the game must refuse this peer for its version (with --protocol 1: an older build's)
     --separation             first, from a second port, say HELLO with protocol 1, which the game must refuse
-    --echo                   (the game with NX2NAVI_COOP_EXT_TEST=echo) send every message of the vectors file and get
-                             each valid one back as it was sent, none of the refused ones; then a flood of PICK, which
-                             the game's rate for the kind must cut
+    --echo                   (the game with NX2NAVI_COOP_EXT_TEST=echo, which sends every kind back and hands none to
+                             its modules) send every message of the vectors file and get each valid one back as it was
+                             sent, none of the refused ones and none twice; then a flood of PICK, which the game's rate
+                             for the kind must cut. What the game's modules send of their own is not the echo's
     --mirror[=METRES]        send the game's own PUPPET and GEAR back as this peer's, moved METRES (2) aside
     --pick COLOUR            PICK that colour (green, red, blue, purple or auto) once let in
     --pick-at S:COLOUR       PICK that colour S seconds after the game's Link was first seen in the world
@@ -787,7 +788,8 @@ def main():
     echo_good, echo_bad = read_vectors(a.vectors) if a.echo else ([], [])
     echo_queue = [(k, n, b) for k, n, b, _ in echo_good] + [(k, n, b) for k, n, b in echo_bad]
     echo_wait = {}            # (kind, bytes) -> name, of what must come back
-    echo_back = echo_stray = 0
+    echo_sent = set()         # (kind, bytes) of every message the echo sent: one coming back is the echo's
+    echo_back = echo_stray = echo_own = 0
     flood = {'sent': 0, 'back': 0, 'at': None, 'done': False, 'queue_done': None}
     flood_msg = pick_pack(1)
     start = time.monotonic()
@@ -926,6 +928,7 @@ def main():
                 kind, name, b = echo_queue.pop(0)
                 if parses(kind, b):
                     echo_wait[(kind, b)] = name
+                echo_sent.add((kind, b))
                 send(kind, b)
                 if not echo_queue:
                     flood['queue_done'] = now
@@ -991,8 +994,11 @@ def main():
                 flood['back'] += 1
                 continue
             if a.echo:
-                echo_stray += 1
-                print(f'peer: echo: a {describe(kind, b)} came back that was not waited for')
+                if (kind, b) in echo_sent:   # a refused one, or a valid one a second time
+                    echo_stray += 1
+                    print(f'peer: echo: a {describe(kind, b)} came back that was not waited for')
+                else:   # the game's modules still send their own messages (its colours, the time of day, ...)
+                    echo_own += 1
                 continue
             if kind != K_PUPPET or seen[kind] in (1, 10) or seen[kind] % 100 == 0:
                 print(f'peer: from the game: {describe(kind, b)}' + (f' (#{seen[kind]})' if kind == K_PUPPET else ''))
@@ -1036,7 +1042,7 @@ def main():
     if a.echo:
         n_good = len(echo_good)
         print(f'peer: echo: {echo_back} of {n_good} messages came back as they were sent, {len(echo_wait)} did not, '
-              f'{echo_stray} came back that should not have')
+              f'{echo_stray} came back that should not have; {echo_own} of the game\'s own were not counted')
         if echo_wait:
             print('peer: echo: missing: ' + ', '.join(sorted(echo_wait.values())))
         if echo_back != n_good or echo_stray:
