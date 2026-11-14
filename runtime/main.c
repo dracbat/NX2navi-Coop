@@ -28,6 +28,8 @@
 //     --probe-meshfb    the mesh shader fallback: mesh programs drawn through VK_EXT_mesh_shader and through compute
 //                       passes, the pictures compared; needs no game files (mesh_fb_probe.c)
 //     --probe-zstd      host zstd streams (ov_zstd.c) on frames made here; needs no game files
+//     --probe-coop-ext  the codecs of the co-op modules' messages against their byte vectors (coop_ext_probe.c; the file
+//                       NX2NAVI_COOP_EXT_VECTORS names); needs no game files
 //     --probe-input     gamepad polls on a virtual gamepad, also while SDL's update takes long; needs no game files
 //     --probe-movie     the host movie decoders on one RomFS movie (VP9 movie::Decoder, AV1 movie::VideoDecoder); skips without game data
 //     --boot            run the game to the first NVN call
@@ -47,6 +49,7 @@
 
 #include "cfg.h"
 #include "coop.h"
+#include "coop_ext.h"
 #include "coop_game.h"
 #include "host.h"
 #include "logq.h"
@@ -601,7 +604,7 @@ static int usage(const char *argv0) {
     fprintf(stderr, "usage: %s [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] [--list-audio-devices | --list-monitors | --selftest | --probe-loader | "
                     "--probe-cfg | --probe-dpi | --probe-mods | --probe-kernel | --probe-ipc | --probe-services | --probe-fs | --probe-gfx-abi | "
                     "--probe-nvn | --probe-nvn-tex | --probe-window | --probe-shader | --probe-vkmem | "
-                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-discord | "
+                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-zstd | --probe-coop-ext | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-discord | "
                     "--prepare-shaders | --warm-shaders | --prepare-pipelines | --probe-prewarm | --probe-buildgate | --probe-ffx-cache | --probe-memneed | --probe-devlost | --boot |--seconds S [--shot PNG]]\n", argv0);
     return 2;
 }
@@ -734,6 +737,7 @@ static int main_run(int argc, char **argv) {
         vk_driver_cache_env();   // before the threads below and rt_boot's, any of which may load the Vulkan driver
         discord_init();   // the Rich Presence thread (discord_rpc.c); it reads nx2navi.ini itself and idles while off
         coop_game_init(); // co-op's game side (coop_game.c), before the thread that hands it messages
+        coop_ext_init();  // the glue of the co-op modules (coop_ext.c), before they register with it
         coop_init();      // the co-op thread (coop.c); the same, idle while the COOP setting is off
         rt_boot();
         return 0;
@@ -765,6 +769,7 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-meshfb")) return probe_meshfb();
     if (!strcmp(mode, "--probe-astc")) return probe_astc();
     if (!strcmp(mode, "--probe-zstd")) return probe_zstd();
+    if (!strcmp(mode, "--probe-coop-ext")) return probe_coop_ext();
     if (!strcmp(mode, "--probe-input")) return probe_gamepad();
     if (!strcmp(mode, "--probe-vkdevice")) return probe_vkdevice();
     if (!strcmp(mode, "--probe-devlost")) return vk_sync_probe_devlost();

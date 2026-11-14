@@ -20,7 +20,7 @@ import time
 L_JOIN, L_MEMBERS, L_DATA, L_LEAVE = 1, 2, 3, 4
 K_HELLO, K_WELCOME, K_REFUSED, K_ROSTER, K_POSE, K_CHAT = 1, 2, 3, 4, 5, 6
 K_FLAGS, K_ASK = 16, 17
-PROTOCOL, GAME_BUILD = 1, 0xE0F3CCFA
+PROTOCOL, GAME_BUILD = 2, 0xE0F3CCFA
 
 
 def pose_bytes(number, pos, scene):
