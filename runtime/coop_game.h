@@ -15,3 +15,6 @@ void coop_game_rom_open(const char *path);
 // comes back, a pause or a load included. On the title screen Link's actor and the area flag stay from the save played
 // before, so they alone do not tell that this player is in the world.
 int coop_game_played(void);
+// The co-op modules, any thread: 1 once the save was copied for this room (coop_present starts the copy in a room
+// with a save played, whether progress is shared or not); a received kill waits for it.
+int coop_game_backed_up(void);

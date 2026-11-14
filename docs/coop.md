@@ -2,12 +2,14 @@
 
 Up to four players, each in their own game with their own save, meet in a room through Steam. In a room you see the
 other players as Links of their own in your world, in their gear and their colours with their names above them, you
-can chat, and progress is shared: what anyone achieves counts for everyone.
+can chat, and you play the story together: what anyone achieves counts for everyone, and an enemy one player kills
+dies in every world.
 
 **Co-op is experimental and off by default.** Turn it on in the menu's Co-op tab (*Co-op (experimental)*), or with
 `coop_steam = 1` under `[coop]` in `nx2navi.ini`. With it off the game uses no network at all.
 
-Not in this version: enemies, pots and the time of day are each game's own.
+Not in this version: pots, grass, enemies the game spawns, the drops of a kill and the time of day are each game's
+own.
 
 ## What you need
 
@@ -55,7 +57,8 @@ rid of someone, the host removes them; to be sure, leave and create a new room.
 
 - **Your save is copied first.** When your game starts to share in a room (you are in the room and playing a save),
   it copies your whole save (every slot) to `coop-backup/<date-time>` in the profile folder, and takes nothing from
-  the room until the copy is made. The newest twelve copies are kept. "Going back" below says how to restore one.
+  the room until the copy is made: no progress and no kill. The newest twelve copies are kept. "Going back" below says
+  how to restore one.
 - **Progress is shared while *Share progress* is on** (it is, by default): story, world and dungeon flags (events,
   talks, chests, doors, switches, bosses, maps and compasses), items and equipment, songs, quest items, wallet, bag and
   quiver sizes. A flag anyone has set is set for everyone, and of a count the highest wins. A player who joins later
@@ -104,6 +107,20 @@ this section); only *Your colour* and *Show player names* have rows on the Co-op
   Link in their colour, smaller with distance, faded from 45 m and gone beyond 60 m, and never on the pause screen or
   while an area loads. The names are drawn with the camera of the picture shown, so they need no upscaler; they show
   through walls. *Show player names* (`coop_names = 0`) turns them off.
+- **Kills and hits** (`runtime/coop_kill.c`). A placed enemy that one player kills dies in the world of every player
+  in that area, each world with its own death and its own drop for its player, and the hits each player deals to a
+  placed enemy count in every world of that area, so the players fight it together. Enemies the game spawns are left
+  out (they are not the same enemy in two worlds), and so are mini-bosses, Gold Skulltulas, Deku scrubs, Poes and a
+  few others. A boss takes the other players' hits but keeps at least 1 life from them, so its killing blow and its
+  death stay each world's own (`coop_damage_boss = lethal` shares those too). An enemy far from your Link stops
+  updating in your world, so another player's kill or hit waits there until you come near (60 s at most; a change of
+  area drops it).
+- **Difficulty by the number of players.** Enemies and bosses take less damage, and Link more, with every player in
+  the game world: enemy health x1, x1.5, x2 and x2.5 and damage to Link x1, x1.25, x1.5 and x1.75 for 1, 2, 3 and 4
+  players. It counts this player and the other players of the room whose Link is in the world, whether their Links
+  are shown here or not: a player on the title screen counts for none, one who leaves counts for 10 s more, and one
+  who stays in the pause menu longer than about 13 s stops counting until they play on. Instant kills and the game's
+  own changes of life are never scaled. `coop_scale = 0` turns it off.
 
 | Key | Default | |
 |---|---|---|
@@ -111,12 +128,17 @@ this section); only *Your colour* and *Show player names* have rows on the Co-op
 | `coop_puppet_gear` | `1` | `0`: the other players' Links show without their gear |
 | `coop_colour` | `auto` | the Co-op tab's *Your colour*: `green`, `red`, `blue` or `purple`; `auto` the first free one |
 | `coop_colours` | `1` | `0`: no room colours |
+| `coop_kills`, `coop_damage` | `1` | `0`: no shared kills, no shared hits |
+| `coop_damage_boss` | `safe` | `lethal`: a boss's killing blow and death are shared too; `0`: bosses share nothing |
+| `coop_scale` | `1` | `0`: no difficulty by the number of players |
+| `coop_scale_hp`, `coop_scale_taken` | `1,1.5,2,2.5`, `1,1.25,1.5,1.75` | the factors for 1 to 4 players |
+| `coop_share_deny` | empty | more actor-name prefixes that are not shared, comma separated |
 
 ## Who can see what
 
 | Who | Sees |
 |---|---|
-| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines and the progress your game shares |
+| The players in the room | your Steam name and colour, your Link (the area it is in, where it stands, what it plays and its gear), your chat lines, the progress your game shares and the enemies you hit and kill |
 | Your Steam friends | that you play Spacewar, and the room (they may join it) |
 | Valve | what Steam sees of any game that uses its lobbies and network: who is in which lobby, and the traffic's size and timing. Steam encrypts the traffic between the games |
 | Your log (`logs/nx2navi.log`) and "Copy system info" | that a room was made or joined, the other players' Steam names, and the lines below; never a room ID or a Steam id. Steam's library prints lines of its own, one with your Steam id, to the console the game was started from; they are not in the log file, but they are in a file you redirect the game's output to yourself |
@@ -147,8 +169,9 @@ values from the room were not ones this game shares; dropped`.
 The co-op modules say what they do with their settings at the start and when a setting changes, and then what
 happens: `coop: ext:` (the room's players by seat: `seat 2 'name' is in the room`), `coop: colour:` (`the room's
 colours: ...`), `coop: puppet:` (`seat 1 'name' is in <area>: asking for CoopPuppet_Child`, the Link `made after N
-frames`, its gear) and `coop: tags:`. A player of the room is named by seat and Steam name, never by id. Lines about
-what another player sent are a few a second for each player at most, and a line says how many were left out.
+frames`, its gear), `coop: tags:`, `coop: kill:`, `coop: damage:` and `coop: scale:` (`2 players (...): enemy health
+x1.50, damage to Link x1.25`). A player of the room is named by seat and Steam name, never by id. Lines about what
+another player sent are a few a second for each player at most, and a line says how many were left out.
 
 ## How it works
 
@@ -216,8 +239,9 @@ no arbiter, because every shared value only ever rises: two games that set the s
   `tests/coop_ext_vectors.txt` (which `tests/coop_ext_peer.py --write-vectors` writes from a codec of its own), their
   refusals, every shorter and longer copy of each message, and random bytes. Needs no window, GPU or game files.
 - Test hooks, from the environment or `nx2navi.ini`, logged at the start: `NX2NAVI_COOP_PUPPET_TEST=shadow` (a puppet
-  that copies this game's own Link, beside him) and the debug tools' `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`); the
-  header comments of `coop_puppet.c` and `debug_tools.c` give their forms.
+  that copies this game's own Link, beside him), `NX2NAVI_COOP_KILL_TEST` (hits and kills as the player's own, or as
+  another player's) and the debug tools' `NX2NAVI_DBG_TEST` (`warp`, `event`, `flag`); the header comments of
+  `coop_puppet.c`, `coop_kill.c` and `debug_tools.c` give their forms.
 - `NX2NAVI_MENU_TEST_SET=<frame>:COOP_DO=create | leave | join:<room id> | chat:<text> | page:join | page:invite |
   page:chat | page:leave` (environment only) does what the Co-op tab's row or window does.
 - `ocarina --probe-services` checks, among the rest, that every text of the tab has its four languages.
