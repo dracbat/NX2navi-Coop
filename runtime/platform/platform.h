@@ -580,6 +580,9 @@ int plat_net_resolve(const char *host, uint16_t port, PlatAddr *out);
 // A non-blocking UDP socket bound to port (0: any free port) on every local address. dual_stack 1: IPv6 with IPv4 in the
 // same socket (IPv4 alone where the machine has no IPv6); 0: IPv4 only. NULL on failure.
 PlatUdp *plat_udp_open(uint16_t port, int dual_stack);
+// The same, IPv4, bound to port on 127.0.0.1 only: for datagrams between programs on this machine, which a firewall
+// does not ask the player about (a socket bound to every address makes Windows ask whether the program may be reached).
+PlatUdp *plat_udp_open_loopback(uint16_t port);
 uint16_t plat_udp_port(const PlatUdp *u);   // the port it is bound to; 0 on failure
 // One datagram to *to; never blocks. 1 when it was sent or the OS dropped it (a full send buffer, no route, an ICMP
 // error: a datagram may be lost anyway), 0 when it can never be sent (too long, an address the socket cannot reach).

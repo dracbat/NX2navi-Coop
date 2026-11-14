@@ -1,7 +1,8 @@
 // The stand-in for Steam in tests of two or more games on one PC (coop_net.h): datagrams between UDP ports on
-// 127.0.0.1. A player's id is its port, a room's number its maker's port. The maker keeps the member list: a member
-// says JOIN once a second, the maker answers everyone with MEMBERS and drops a member it has not heard for five
-// seconds. Loopback loses and reorders nothing in practice, so "reliable" is a plain datagram here.
+// 127.0.0.1, each game's socket bound to 127.0.0.1 alone, so that no firewall asks about the test. A player's id is
+// its port, a room's number its maker's port. The maker keeps the member list: a member says JOIN once a second, the
+// maker answers everyone with MEMBERS and drops a member it has not heard for five seconds. Loopback loses and
+// reorders nothing in practice, so "reliable" is a plain datagram here.
 //
 // Only the environment turns it on: a settings file cannot.
 #include <stdio.h>
@@ -43,7 +44,7 @@ static void to_port(uint64_t port, const void *p, size_t n) {
 static int l_start(char *why, size_t cap, int *which) {
     if (L.udp) return 1;
     uint64_t port = env_number("NX2NAVI_COOP_LOCAL");
-    L.udp = port && port < 65536 ? plat_udp_open((uint16_t)port, 0) : NULL;
+    L.udp = port && port < 65536 ? plat_udp_open_loopback((uint16_t)port) : NULL;
     if (!L.udp) {
         snprintf(why, cap, "the test port %llu cannot be opened", (unsigned long long)port);
         if (which) *which = STEAM_WHY_NO_CLIENT;
