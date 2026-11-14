@@ -1,6 +1,6 @@
 ## Install or update
 
-- **New install:** download **`NX2navi-Coop-Setup-0.9.2.1.exe`** below, put it next to your `.nup` dump of the game
+- **New install:** download **`NX2navi-Coop-Setup-0.10.1.1.exe`** below, put it next to your `.nup` dump of the game
   and start it. Windows SmartScreen warns on the first start because the setup is not signed: choose *More info* and
   *Run anyway*. The launcher checks your game files, builds the game (10 to 25 minutes, once), prepares every shader,
   makes the Co-op Players and starts it.
@@ -24,7 +24,7 @@ Nothing of the game is included: everything is built on your PC from your own du
   round, and a game of another NX2navi Co-op version is told so and stays out.
 - **Your save is copied first:** before anything of a room reaches it, to `coop-backup` in the profile folder.
 
-## What it adds to NX2navi's co-op
+## What it adds to the co-op through Steam
 
 - **The other players as Links of their own** in your world, on by default (`coop_puppets = 0` under `[coop]` in
   `nx2navi.ini` turns them off), moving as theirs do, in their gear, with their names above them. The launcher makes
@@ -53,7 +53,8 @@ Nothing of the game is included: everything is built on your PC from your own du
 
 ## The base
 
-NX2navi Co-op 0.9.2.1 is NX2navi's code after 0.9.2, whose co-op through Steam replaces the relay of earlier co-op
-builds (NX2navi's `docs/releases/v0.9.3.md` lists what else it changes), with NX2navi Co-op's additions. The parts of
-a release that NX2navi Co-op does not change, such as the shader translator and the upscalers' libraries, are those of
-NX2navi 0.9.2.
+NX2navi Co-op 0.10.1.1 is NX2navi 0.10.1 with the co-op through Steam, which NX2navi took out of 0.10.0, kept, and
+NX2navi Co-op's additions to it. NX2navi's `docs/releases/v0.10.0.md` and `v0.10.1.md` list what 0.10.1 changes since
+0.9.2: among them the frame rate fixes above 60 fps, less video memory, F8 bug captures, text speed, a sprint button
+and low latency. The parts of a release that NX2navi Co-op does not change, such as the shader translator and the
+upscalers' libraries, are those of NX2navi 0.10.1.
