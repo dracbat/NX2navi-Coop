@@ -6,9 +6,11 @@ libraries, DLSS Frame Generation's nx2navi_dlssg.dll, the button art, the shared
 are the upstream release's. They come from its app archive, NX2navi-app-<base>.zip, checked against the size and
 SHA-256 its NX2navi-update.json gives. So the release build needs neither .NET (the translator) nor Visual Studio
 (nx2navi_dlssg.dll) nor the art, and the toolchain lock stays upstream's: its compiler is the one players' launchers
-install, and the prebuilt runtime library matches it.
+install, and the prebuilt runtime library matches it. An execution profile the archive may hold (data/, for
+make_launcher.py --pgo) is not handed on: it was trained on the upstream recomp/, whose patch table NX2navi Co-op
+extends, and make_launcher.py refuses a profile whose record names another recomp/.
 
-    python tools/coop_base_inputs.py --zip NX2navi-app-0.9.2.zip --manifest NX2navi-update.json --out WORK
+    python tools/coop_base_inputs.py --zip NX2navi-app-0.10.1.zip --manifest NX2navi-update.json --out WORK
                                      [--seed-runtime runtime] [--no-prompt-art] [--no-pipeline-list]
     python tools/coop_base_inputs.py --dir <an unpacked app/<version> folder> --out WORK --dry-run
 

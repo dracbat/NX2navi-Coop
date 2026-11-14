@@ -3,16 +3,18 @@
 # NX2navi-Coop-app-<version>.zip, NX2navi-Coop-runtime-<id>.zip and NX2navi-Coop-update.json. A release is left as a
 # draft pre-release to look at before it is published; launchers never see a draft.
 #
-# The code is the built commit's: NX2navi's main as last merged into it, plus NX2navi Co-op. The binary parts NX2navi
-# Co-op does not change come from the upstream release of the base version (VERSION without its fourth number: 0.9.2.1
-# -> 0.9.2), checked against that release's own manifest (tools/coop_base_inputs.py): the shader translator, AMD's and
-# NVIDIA's libraries, nx2navi_dlssg.dll, the button art, the shared pipeline list and the toolchain lock. While the
-# merged main is newer than that release, they fit as long as main changed none of what they are made from since then
-# (runtime/shaders and tools/build_shaders.py, runtime/vk_pipeline* and tools/pipeline_list.py, launcher/toolchain.py,
-# tools/make_launcher.py, tools/prepare_shaders.py, installer/ and recomp/); the shader headers are built again below
-# when they do not match runtime/shaders. Once NX2navi releases the merged main, merge that release's tag and set
-# VERSION to its version plus a fourth number, and the parts come from it. Nothing of the game is involved: the content
-# check runs first, and make_launcher.py runs it again over the release folder.
+# The code is the built commit's: NX2navi's code as last merged into it, plus NX2navi Co-op. The binary parts NX2navi
+# Co-op does not change come from the upstream release of the base version (VERSION without its fourth number:
+# 0.10.1.1 -> 0.10.1), checked against that release's own manifest (tools/coop_base_inputs.py): the shader translator,
+# AMD's and NVIDIA's libraries, nx2navi_dlssg.dll, the button art, the shared pipeline list and the toolchain lock.
+# While the merged code is newer than that release, they fit as long as it changed none of what they are made from
+# since then (runtime/shaders and tools/build_shaders.py, runtime/vk_pipeline* and tools/pipeline_list.py,
+# launcher/toolchain.py, tools/make_launcher.py, tools/prepare_shaders.py, installer/ and recomp/); the shader headers
+# are built again below when they do not match runtime/shaders. To move to a newer NX2navi release, merge its tag and
+# set VERSION to its version plus a fourth number, and the parts come from it. An execution profile is never carried
+# (make_launcher.py --pgo): one is trained on NX2navi's recomp/, whose patch table NX2navi Co-op extends, so
+# make_launcher.py would refuse it, and the game's code is built without one, at -O1. Nothing of the game is involved:
+# the content check runs first, and make_launcher.py runs it again over the release folder.
 #
 # A pushed tag v<a>.<b>.<c>.<d> that equals v + VERSION builds its release. By hand (workflow_dispatch, which GitHub
 # offers for a workflow on the repository's default branch): a ref to build, and whether to draft a release from it or
@@ -75,7 +77,7 @@ jobs:
           "BASE=$base" >> $env:GITHUB_ENV
           "RELEASE=$release" >> $env:GITHUB_ENV
           $sha = (git rev-parse --short=12 HEAD)   # the commit checked out, which a ref given by hand decides
-          "NX2navi Co-op $ver, the code of $ref ($sha): NX2navi's main as last merged into it, plus NX2navi Co-op; " +
+          "NX2navi Co-op $ver, the code of $ref ($sha): NX2navi's code as last merged into it, plus NX2navi Co-op; " +
             "the binary parts of NX2navi's release v$base; release: $release" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Content check
