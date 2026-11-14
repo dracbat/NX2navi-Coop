@@ -781,7 +781,7 @@ class App:
             if left and not self.message:
                 # make_game.py keeps the old exe until the new one is linked and records each finished step, so the
                 # game folder is playable and a rebuild goes on from there; the player is told that it is due
-                self.message = (f'NX2navi was closed or stopped during {left["task"]}, which did not finish. Play '
+                self.message = (f'{NAME} was closed or stopped during {left["task"]}, which did not finish. Play '
                                 'starts the last finished build; Rebuild the Game finishes what was left.')
                 self.render()
             if self.install_staged('a staged update waited for the launcher to start'):
@@ -793,7 +793,7 @@ class App:
                 self.check_now()
         else:
             if left and not self.message:
-                self.message = (f'NX2navi was closed or stopped during {left["task"]}, which did not finish. Begin '
+                self.message = (f'{NAME} was closed or stopped during {left["task"]}, which did not finish. Begin '
                                 'Installation goes on from the steps that were done.')
             self.show('first_run')
             self.find_dumps()
@@ -2823,7 +2823,7 @@ def main(argv=None):
             # A second window on the same folder would run its own jobs into the same game folder and settings. The
             # first one may be out of sight (hidden while the game runs), so the player is told who holds the folder
             ctx.log(f'not started: {e}')
-            tell(f'NX2navi is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
+            tell(f'{NAME} is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
                  'when you quit the game.')
             return 0
     try:

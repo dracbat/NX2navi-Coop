@@ -4059,7 +4059,7 @@ class LockTest(Tmp):
             self.assertEqual(app.main(['--root', str(self.layout.root)]), 0)
         window.assert_not_called()                 # no second window
         self.assertEqual(len(said), 1)
-        self.assertIn(f'NX2navi is already running: the launcher window (process {other.pid}', said[0])
+        self.assertIn(f'NX2navi Co-op is already running: the launcher window (process {other.pid}', said[0])
 
     def test_the_lock_goes_when_its_process_dies(self):
         other = self.holder(self.layout)

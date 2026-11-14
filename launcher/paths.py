@@ -61,7 +61,7 @@ def long_path_problem(game_dir):
         return ''
     return (f'the path of the game folder is {n} characters long, and the game\'s files need {LONGEST_IN_GAME} more: '
             f'Windows and the build tools stop at {WINDOWS_PATH_MAX + 1} for a file\'s whole path. Choose a folder '
-            f'whose path has at most {most} characters, such as D:\\Games\\NX2navi')
+            f'whose path has at most {most} characters, such as D:\\Games\\{brand.FOLDER}')
 
 
 def fixed_drive(drive):
